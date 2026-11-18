@@ -52,4 +52,11 @@ feature/<sujet> ──PR──▶ dev ──PR──▶ staging ──PR──�
 
 ## Équipe
 
-_À compléter._
+| Membre | Rôle | Branches principales |
+|---|---|---|
+| Lilou | A — Données / ML | `feature/data-pipeline`, `feature/training-mlflow`, `feature/promotion-rule`, `feature/ct-workflow` |
+| Camille | B — App / tests | `feature/api-skeleton`, `feature/model-loader`, `feature/web-ui`, `feature/tests` |
+| Victoria | C — DevOps | `feature/repo-setup`, `feature/docker`, `feature/ci`, `feature/deploy-render`, `feature/rollback`, `feature/docs-deployment` |
+
+Chaque membre pousse ses branches et ouvre ses PR depuis son compte ; un autre membre relit et
+approuve. Les PR de promotion (`dev → staging → main`) sont ouvertes à tour de rôle.
