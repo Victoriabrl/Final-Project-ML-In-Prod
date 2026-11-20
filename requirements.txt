@@ -6,3 +6,5 @@ scikit-learn==1.9.1
 pandas==3.0.6
 # To verify in phase 4: mlflow-skinny is enough to load a sklearn model; otherwise switch to mlflow.
 mlflow-skinny==3.17.1
+# MLflow 3 serializes sklearn models with skops by default (safe load, no pickle).
+skops==0.16.0
