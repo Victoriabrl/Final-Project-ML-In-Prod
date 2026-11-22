@@ -87,13 +87,26 @@ python -m scripts.check_registry_aliases   # vérifie le support des alias par l
 
 ## Runs
 
-> Runs exécutés en local (`MLFLOW_TRACKING_URI=sqlite:///mlflow.db`) en attendant DagsHub.
-> À refaire sur DagsHub et à remplacer par les run ids DagsHub.
+Runs exécutés le 2026-11-22 sur le serveur MLflow partagé DagsHub
+(<https://dagshub.com/Victoriabrl/Final-Project-ML-In-Prod.mlflow>, expérience
+`sms-spam-training`), depuis un checkout propre du commit `d3fecad` (`git_dirty=false`).
+Les scores sont identiques aux runs locaux du commit `e70655f` : l'entraînement est
+déterministe (seed 42, mêmes données v1, même holdout).
 
 | Run id | Modèle | Données | Commit | F1 spam | Précision | Rappel | Accuracy |
 |---|---|---|---|---|---|---|---|
-| `7e620799a58a4a4285f94332ef1919da` (local) | baseline | v1 | `e70655f` | 0,8837 | 0,8769 | 0,8906 | 0,9709 |
-| `b41f4abc3a574d67a11cf5a708bb2319` (local) | candidat | v1 | `e70655f` | 0,9295 | 0,9912 | 0,8750 | 0,9835 |
+| `40a7cc0c64324b82ba12ed37dc3322ba` | baseline | v1 | `d3fecad` | 0,8837 | 0,8769 | 0,8906 | 0,9709 |
+| `55a36cd235b24c23a7dac77fb5a71af2` | candidat | v1 | `d3fecad` | 0,9295 | 0,9912 | 0,8750 | 0,9835 |
+
+Ces runs ne sont pas enregistrés dans le registry (`--register` non utilisé) : la
+version 1 de `sms-spam` sera créée par l'amorçage du CT (phase 6), comme prévu par le brief.
+
+### Support des alias par DagsHub
+
+Vérifié le 2026-11-22 avec `python -m scripts.check_registry_aliases` : un modèle factice
+`alias-check` a été enregistré, l'alias `probe` posé puis relu
+(`get_model_version_by_alias`) et le modèle rechargé via `models:/alias-check@probe`.
+Les alias sont donc utilisables sur DagsHub pour `champion`.
 
 ## Choix du modèle de production
 
