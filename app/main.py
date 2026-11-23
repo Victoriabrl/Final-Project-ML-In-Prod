@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.model_loader import ModelLoader, ModelNotReadyError
-from app.schemas import ModelInfo, PredictRequest, PredictResponse, Status
+from app.schemas import Health, ModelInfo, PredictRequest, PredictResponse, Status
 from app.settings import Settings, get_settings
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -44,10 +44,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
-    @app.get("/health", response_model=Status)
-    def health() -> Status:
-        """Liveness: the process is running."""
-        return Status(status="ok")
+    @app.get("/health", response_model=Health)
+    def health(request: Request) -> Health:
+        """Liveness: the process is running (also reports the image's commit)."""
+        return Health(status="ok", git_sha=loader_of(request).settings.git_sha)
 
     @app.get("/ready", response_model=Status, responses={503: {"model": Status}})
     def ready(request: Request):

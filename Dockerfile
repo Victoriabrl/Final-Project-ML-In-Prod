@@ -16,6 +16,11 @@ RUN useradd --create-home --uid 10001 appuser
 COPY --chown=appuser:appuser app/ ./app/
 USER appuser
 
+# Commit the image is built from (docker build --build-arg GIT_SHA=...), shown by /health.
+# Declared last so changing it does not invalidate the dependency layers.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 EXPOSE 8000
 # exec: uvicorn becomes PID 1 and receives SIGTERM, so the lifespan shutdown runs.
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

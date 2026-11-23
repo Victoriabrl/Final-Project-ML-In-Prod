@@ -1,12 +1,14 @@
 """Smoke test a running service: wait for /ready, check the model version, predict.
 
-Usage: python scripts/smoke_test.py --url URL [--expected-version N] [--timeout 300]
+Usage: python scripts/smoke_test.py --url URL [--expected-version N]
+                                    [--expected-git-sha SHA] [--timeout 300]
 Standard library only, so it runs anywhere (CI runner, laptop).
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -33,23 +35,44 @@ def request(method: str, url: str, body: dict | None = None, timeout: float = 30
             return exc.code, payload.decode(errors="replace")
 
 
-def wait_ready(base: str, timeout: float, interval: float = 5) -> dict:
+def wait_ready(
+    base: str, timeout: float, expected_git_sha: str | None = None, interval: float = 5
+) -> dict:
+    """Wait until /ready is 200 (and, if given, /health reports the expected commit).
+
+    Render keeps the previous instance serving until the new one is healthy, so after a
+    deploy the commit check is what proves the live URL runs the new image.
+    """
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
         try:
+            if expected_git_sha is not None:
+                status, health = request("GET", f"{base}/health", timeout=30)
+                served_sha = health.get("git_sha") if isinstance(health, dict) else None
+                if status != 200 or served_sha != expected_git_sha:
+                    last = f"/health HTTP {status}, git_sha={served_sha!r}"
+                    print(f"  old or no instance ({last}), retrying in {interval:.0f}s", flush=True)
+                    time.sleep(interval)
+                    continue
             status, body = request("GET", f"{base}/ready", timeout=30)
             if status == 200:
                 return body
             last = f"HTTP {status}: {str(body)[:200]}"
-        except (urllib.error.URLError, OSError) as exc:  # not listening yet / cold start
+        # Not listening yet, cold start, or connection cut while an instance restarts.
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             last = repr(exc)
         print(f"  not ready yet ({last}), retrying in {interval:.0f}s", flush=True)
         time.sleep(interval)
     raise AssertionError(f"service not ready after {timeout:.0f}s (last: {last})")
 
 
-def run(base: str, expected_version: str | None, timeout: float) -> list[str]:
+def run(
+    base: str,
+    expected_version: str | None,
+    timeout: float,
+    expected_git_sha: str | None = None,
+) -> list[str]:
     base = base.rstrip("/")
     lines = []
 
@@ -60,7 +83,9 @@ def run(base: str, expected_version: str | None, timeout: float) -> list[str]:
             raise AssertionError(msg)
 
     print(f"Waiting for {base}/ready (timeout {timeout:.0f}s)", flush=True)
-    ready = wait_ready(base, timeout)
+    ready = wait_ready(base, timeout, expected_git_sha)
+    if expected_git_sha is not None:
+        check(True, f"/health serves commit {expected_git_sha}")
     check(True, f"/ready -> {ready}")
 
     status, info = request("GET", f"{base}/model-info")
@@ -82,12 +107,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", required=True)
     parser.add_argument("--expected-version")
+    parser.add_argument("--expected-git-sha", help="wait until /health reports this commit")
     parser.add_argument("--timeout", type=float, default=300)
     args = parser.parse_args(argv)
 
     ok = True
     try:
-        lines = run(args.url, args.expected_version, args.timeout)
+        lines = run(args.url, args.expected_version, args.timeout, args.expected_git_sha)
     except (AssertionError, KeyError, urllib.error.URLError, OSError) as exc:
         ok, lines = False, [f"FAIL {exc}"]
         print(lines[0], flush=True)

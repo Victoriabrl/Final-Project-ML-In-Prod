@@ -44,9 +44,9 @@ feature/<sujet> ──PR──▶ dev ──PR──▶ staging ──PR──�
 
 | Workflow | Déclencheur | Effet |
 |---|---|---|
-| `ci.yml` | PR vers `dev`, `staging`, `main` | _phase 5_ |
-| `staging.yml` | push sur `staging` | _phase 5_ |
-| `deploy.yml` | push sur `main` | _phase 5_ |
+| `ci.yml` | PR vers `dev`, `staging`, `main` | Jobs `lint` (ruff), `tests` (pytest, registry MLflow local), `docker-smoke` (build de l'image, serveur MLflow de test, conteneur lancé, `smoke_test.py`). Un échec bloque le merge. |
+| `staging.yml` | push sur `staging` (= merge) | Build de l'image `ghcr.io/<owner>/<repo>:sha-<commit>`, lancée dans Actions contre le vrai registry DagsHub, smoke test avec la version du champion, puis push sur GHCR. |
+| `deploy.yml` | push sur `main` (= merge) | Build + vérification de l'image en conteneur, push GHCR, deploy hook Render avec `imgURL`, attente que l'URL live serve ce commit (`/health`), smoke test sur `PROD_URL` (vraie prédiction + version attendue). Un seul déploiement à la fois. |
 | `ct.yml` | `workflow_dispatch` | _phase 6_ |
 | `rollback.yml` | `workflow_dispatch` | _phase 7_ |
 
