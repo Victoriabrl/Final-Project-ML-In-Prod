@@ -61,3 +61,10 @@ def test_resolve_cli_fails_without_alias(registry, monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     assert resolve_main(["--alias", "nope", "--tracking-uri", registry["tracking_uri"]]) == 1
     assert not output.exists()  # nothing written for the workflow on failure
+
+
+def test_resolve_cli_refuses_missing_tracking_uri(monkeypatch, capsys):
+    # Even with --allow-missing: no URI must never be mistaken for "no champion yet".
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    assert resolve_main(["--allow-missing"]) == 1
+    assert "MLFLOW_TRACKING_URI is not set" in capsys.readouterr().err
