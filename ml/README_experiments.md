@@ -108,6 +108,54 @@ Vérifié le 2026-11-22 avec `python -m scripts.check_registry_aliases` : un mod
 (`get_model_version_by_alias`) et le modèle rechargé via `models:/alias-check@probe`.
 Les alias sont donc utilisables sur DagsHub pour `champion`.
 
+## Continuous training et rollback
+
+Le CT (`ct.yml` → `python -m ml.ct_pipeline`) et le rollback (`rollback.yml` →
+`python -m ml.rollback`) loggent leurs décisions dans l'expérience **`sms-spam-ct`** :
+
+- run parent **`ct-decision`** : tags `data_version`, `dvc_md5`, `manifest_sha256`, `git_sha`,
+  `decision` (`promoted` / `rejected` / `kept` / `failed`), `reason`, `retrain_reasons`,
+  `champion_version_before`, `champion_version_after`, `candidate_version`, `deployed` ;
+  paramètres `metric`, `direction`, `quality_floor`, `min_improvement` ; métriques
+  `champion_f1_spam` (champion rescoré sur le held-out de la release) et `candidate_f1_spam` ;
+- le run d'entraînement du candidat est **imbriqué** sous `ct-decision` (mêmes tags et artefacts
+  que les runs de `ml.train`) ;
+- run **`rollback`** : `champion_version_before`, `champion_version_after`, `changed`, `reason`,
+  `git_sha`.
+
+Sur la version du registry : `status=candidate` à l'enregistrement, puis `approved` (promu) ou
+`rejected` + `status_reason` ; la version promue porte `previous_champion` (cible par défaut du
+rollback).
+
+```bash
+# en local, contre le registry de MLFLOW_TRACKING_URI (sans déploiement)
+python -m ml.ct_pipeline --data-version v1                 # amorçage : baseline -> champion
+python -m ml.ct_pipeline --data-version v2                 # nouvelles données -> candidat
+python -m ml.ct_pipeline --data-version v2 --force-train   # réentraînement forcé
+python -m ml.rollback --model-name sms-spam --version 1
+```
+
+### Démonstrations (phase 9)
+
+Scénario prévu d'après les scores mesurés (entraînement déterministe) :
+
+| # | Lancement | Résultat attendu |
+|---|---|---|
+| 1 | `ct.yml` v1 (registry vide) | amorçage : baseline v1 (0,884 ≥ 0,85) → version 1 = champion, déployée |
+| 2 | publier v2 (tag `data-v2`), puis `ct.yml` v2 | `new_data_version` → candidat v2 (≈0,953) vs champion rescoré (0,884) : +0,069 → promu (version 2) |
+| 3 | `ct.yml` v2 + `force_train` | candidat v2 identique : amélioration 0 < 0,01 → rejeté, champion 2 conservé |
+| 4 | `rollback.yml` vers 1, puis vers 2 | la prod sert la version 1, puis à nouveau la meilleure (2) |
+
+À éviter : `ct.yml` v1 avec `force_train` après l'amorçage promouvrait le candidat v1 (0,930,
++0,046) et décalerait les numéros de version du scénario.
+
+| # | Run `ct-decision` / `rollback` | Décision | Champion avant → après | Lien Actions |
+|---|---|---|---|---|
+| 1 | _à compléter_ | | | |
+| 2 | _à compléter_ | | | |
+| 3 | _à compléter_ | | | |
+| 4 | _à compléter_ | | | |
+
 ## Choix du modèle de production
 
 _À compléter après les démonstrations CT (phase 9)._ Scénario attendu d'après les mesures
