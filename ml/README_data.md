@@ -72,5 +72,10 @@ v2 simule l'arrivée de nouveaux messages étiquetés : le jeu d'entraînement p
 | Version | Train (lignes / spams) | Held-out (lignes / spams) | SHA-256 held-out | Tag Git | Commit | Hash DVC (md5 du `.dvc`) |
 |---|---|---|---|---|---|---|
 | raw | 5 574 messages bruts | — | — | — | _à compléter après merge_ | `6a7944dd155067d167bf352e1841a3f2.dir` |
-| v1 | 800 / 93 | 1 032 / 128 | `ab9f9cb9…a67e9088d` | `data-v1` | _à compléter après merge_ | `807e5f8cf19f3c946f158ea14b13fe2e.dir` |
+| v1 | 800 / 93 | 1 032 / 128 | `ab9f9cb9…a67e9088d` | `data-v1` | `4c44f41` | `807e5f8cf19f3c946f158ea14b13fe2e.dir` |
 | v2 | 4 128 / 514 | 1 032 / 128 | `ab9f9cb9…a67e9088d` | `data-v2` | _publiée plus tard_ | _publiée plus tard_ |
+
+Le tag `data-v1` pointe sur le commit `4c44f41` (« data: publish release v1 »), intégré
+à `dev` par la PR #2. Les données v1 et brutes ont été envoyées le 2026-11-22 sur le remote
+DVC Azure Blob (`azure://dvc-store/sms-spam`, compte `projectsmsdevops`) ; un `dvc pull`
+depuis un clone neuf suivi de `validate_data --version v1` a été vérifié.
