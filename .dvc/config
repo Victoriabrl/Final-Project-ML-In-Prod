@@ -1,0 +1,6 @@
+[core]
+    remote = azure
+    autostage = true
+['remote "azure"']
+    url = azure://dvc-store/sms-spam
+    account_name = projectsmsdevops

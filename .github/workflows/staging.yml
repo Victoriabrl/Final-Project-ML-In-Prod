@@ -1,0 +1,99 @@
+# Merge into staging: build the release-candidate image, run it inside Actions against
+# the real DagsHub registry, smoke test it with the current champion version, and only
+# then push it to GHCR as ghcr.io/<owner>/<repo>:sha-<commit>.
+name: staging
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: staging
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  MODEL_NAME: sms-spam
+  MODEL_ALIAS: champion
+  # DagsHub credentials (read access is enough here). Never echoed.
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+jobs:
+  release-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements.txt
+
+      - name: Image name
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"   # GHCR names must be lowercase
+          echo "IMAGE=ghcr.io/${repo}:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      # --allow-missing: before the first CT run (bootstrap) there is no champion yet.
+      - name: Resolve expected champion version
+        id: champion
+        run: python -m scripts.resolve_champion --allow-missing
+
+      - name: Build image
+        run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "$IMAGE" .
+
+      - name: Run container against the real registry
+        run: |
+          docker run -d --name app -p 8080:8080 -e PORT=8080 \
+            -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -e MODEL_NAME -e MODEL_ALIAS \
+            "$IMAGE"
+
+      - name: Smoke test
+        if: steps.champion.outputs.found == 'true'
+        run: |
+          python scripts/smoke_test.py --url http://localhost:8080 \
+            --expected-version "${{ steps.champion.outputs.version }}" \
+            --expected-git-sha "$GITHUB_SHA" --timeout 300
+
+      # Bootstrap only: the image must start and report its commit, and must refuse
+      # readiness (503) since there is no approved model to serve.
+      - name: Liveness check (no champion yet)
+        if: steps.champion.outputs.found != 'true'
+        run: |
+          echo "::warning::No approved champion in the registry yet: full smoke test skipped. Run ct.yml (v1) to bootstrap."
+          sh scripts/check_liveness.sh http://localhost:8080 "$GITHUB_SHA"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker logs app || true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push validated image
+        run: docker push "$IMAGE"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Release candidate ✅"
+            echo
+            echo "- Image: \`$IMAGE\`"
+            if [ "${{ steps.champion.outputs.found }}" = "true" ]; then
+              echo "- Champion served in the smoke test: version ${{ steps.champion.outputs.version }}"
+            else
+              echo "- ⚠️ No champion yet (bootstrap): liveness only, run ct.yml with v1"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

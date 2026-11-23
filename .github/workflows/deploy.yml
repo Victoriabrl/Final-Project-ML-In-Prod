@@ -1,0 +1,130 @@
+# Merge into main: build and verify the image (container + real registry + smoke test),
+# push ghcr.io/<owner>/<repo>:sha-<commit>, trigger the Render deploy hook with that
+# image, wait until the live URL serves this commit, then smoke test production
+# (real prediction + expected champion version).
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+# One production deploy at a time; a newer merge waits instead of cancelling a deploy.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  MODEL_NAME: sms-spam
+  MODEL_ALIAS: champion
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements.txt
+
+      - name: Check configuration
+        env:
+          PROD_URL: ${{ vars.PROD_URL }}
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          missing=""
+          [ -n "$PROD_URL" ] || missing="$missing PROD_URL(variable)"
+          [ -n "$RENDER_DEPLOY_HOOK_URL" ] || missing="$missing RENDER_DEPLOY_HOOK_URL(secret)"
+          [ -n "$MLFLOW_TRACKING_URI" ] || missing="$missing MLFLOW_TRACKING_URI(secret)"
+          if [ -n "$missing" ]; then echo "::error::Missing:$missing"; exit 1; fi
+
+      - name: Image name
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=ghcr.io/${repo}:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      # --allow-missing: before the first CT run there is no champion; the image is then
+      # verified and pushed, but the Render deploy is skipped (nothing to serve yet).
+      - name: Resolve expected champion version
+        id: champion
+        run: python -m scripts.resolve_champion --allow-missing
+
+      - name: Build image
+        run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "$IMAGE" .
+
+      - name: Verify image in a container
+        run: |
+          docker run -d --name app -p 8080:8080 -e PORT=8080 \
+            -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -e MODEL_NAME -e MODEL_ALIAS \
+            "$IMAGE"
+          if [ "${{ steps.champion.outputs.found }}" = "true" ]; then
+            python scripts/smoke_test.py --url http://localhost:8080 \
+              --expected-version "${{ steps.champion.outputs.version }}" \
+              --expected-git-sha "$GITHUB_SHA" --timeout 300
+          else
+            sh scripts/check_liveness.sh http://localhost:8080 "$GITHUB_SHA"
+          fi
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs app || true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        run: docker push "$IMAGE"
+
+      - name: No champion yet
+        if: steps.champion.outputs.found != 'true'
+        run: |
+          echo "::warning::No approved champion yet: image pushed, Render deploy skipped. Run ct.yml (v1) to bootstrap and deploy."
+
+      - name: Trigger Render deploy
+        if: steps.champion.outputs.found == 'true'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: sh scripts/deploy_render.sh "$IMAGE"
+
+      # Render keeps the previous instance until the new one passes its /ready health
+      # check, so wait for /health to report this commit before testing (free plan:
+      # image pull + cold start can take several minutes).
+      - name: Smoke test production
+        if: steps.champion.outputs.found == 'true'
+        run: |
+          python scripts/smoke_test.py --url "${{ vars.PROD_URL }}" \
+            --expected-version "${{ steps.champion.outputs.version }}" \
+            --expected-git-sha "$GITHUB_SHA" --timeout 900
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Production deploy (${{ job.status }})"
+            echo
+            echo "- Image: \`$IMAGE\`"
+            if [ "${{ steps.champion.outputs.found }}" = "true" ]; then
+              echo "- Expected champion version: ${{ steps.champion.outputs.version }}"
+            else
+              echo "- ⚠️ No champion yet: Render deploy skipped (bootstrap with ct.yml v1)"
+            fi
+            echo "- URL: ${{ vars.PROD_URL }}"
+          } >> "$GITHUB_STEP_SUMMARY"
