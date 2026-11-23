@@ -66,7 +66,8 @@ def promote(
     """
     version = str(version)
     previous = get_version_by_alias(client, model_name, alias)
-    previous_version = previous.version if previous else None
+    # MLflow 3 may return the version as an int: normalise to str like everywhere else.
+    previous_version = str(previous.version) if previous else None
 
     set_status(client, model_name, version, STATUS_APPROVED)
     if previous_version and previous_version != version:
