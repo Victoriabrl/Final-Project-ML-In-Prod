@@ -60,3 +60,7 @@ def test_accents_emojis_and_digits_accepted(client, text):
     r = client.post("/predict", json={"text": text})
     assert r.status_code == 200
     assert r.json()["label"] in {"spam", "ham"}
+
+
+def test_intentionally_broken():
+    assert 1 == 2  # demo: a failing PR must not be mergeable
