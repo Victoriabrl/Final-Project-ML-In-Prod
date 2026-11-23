@@ -74,7 +74,13 @@ def train(
     register: bool = False,
     data_root: Path = RELEASES_DIR,
     experiment: str = EXPERIMENT,
+    nested: bool = False,
 ) -> dict:
+    """Train on a release, log the run, optionally register the model.
+
+    ``nested=True`` logs the run as a child of the active run (the CT ``ct-decision``
+    parent run); the experiment is then the parent's.
+    """
     release_dir = data_root / data_version
     errors = validate_release(release_dir)
     if errors:
@@ -101,8 +107,10 @@ def train(
         "model_family": params.get("name", "unknown"),
     }
 
-    mlflow.set_experiment(experiment)
-    with mlflow.start_run(run_name=f"{params.get('name', 'model')}-{data_version}") as run:
+    if not nested:
+        mlflow.set_experiment(experiment)
+    run_name = f"{params.get('name', 'model')}-{data_version}"
+    with mlflow.start_run(run_name=run_name, nested=nested) as run:
         mlflow.set_tags(lineage)
         mlflow.log_params(flatten({k: v for k, v in params.items() if k != "name"}))
         mlflow.log_params(
