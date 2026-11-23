@@ -50,6 +50,25 @@ Tout est déterministe (seed 42) : relancer le script produit des fichiers ident
 
 Les textes de train et de held-out sont disjoints (vérifié par `validate_data.py`).
 
+### Chronologie
+
+Le temps ne joue pas de rôle ici : le fichier UCI ne contient **aucune date**, et l'ordre des
+messages ne reflète pas leur ordre d'arrivée. Il n'y a donc pas de chronologie à préserver, et un
+tirage aléatoire stratifié (seed fixe) est le split le plus représentatif. L'« arrivée » de
+nouvelles données entre v1 et v2 est simulée par des lots reproductibles tirés du pool, jamais
+par le held-out.
+
+### Prétraitement : entraînement et évaluation séparés
+
+- Le **nettoyage** (espaces en bord, textes vides, doublons exacts, labels contradictoires) est
+  fait **avant** le split, ligne par ligne, sans rien apprendre des données. Supprimer les
+  doublons avant le split évite qu'un même SMS se retrouve à la fois dans le train et dans le
+  held-out.
+- Le **prétraitement appris** (vectorisation TF-IDF : vocabulaire et poids IDF) fait partie du
+  pipeline scikit-learn enregistré dans MLflow. Il est ajusté (`fit`) **uniquement sur le train**
+  de la release, puis seulement appliqué (`transform`) au held-out et aux requêtes de l'API.
+- Aucune augmentation de données n'est utilisée.
+
 Chaque release contient `train.csv`, `holdout.csv` et `manifest.json` (version, seed, source,
 statistiques de nettoyage, nombre de lignes et de spams par fichier, SHA-256 de chaque CSV,
 description du changement).
