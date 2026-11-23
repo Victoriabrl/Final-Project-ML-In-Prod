@@ -1,0 +1,95 @@
+# Continuous training, started by hand (Actions > ct > Run workflow). All the logic is
+# in ml/ct_pipeline.py so it can be tested and run locally:
+#   fetch + validate -> score champion -> retrain rule -> train + compare
+#   -> promote + deploy + verify live (or keep champion) -> restore alias on failure.
+name: ct
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_version:
+        description: Data release to fetch, validate and train on
+        type: choice
+        options: [v1, v2]
+        required: true
+      model_name:
+        description: Registered model (sms-spam-staging = controlled demo, never deployed)
+        type: choice
+        options: [sms-spam, sms-spam-staging]
+        default: sms-spam
+      force_train:
+        description: Train a candidate even if the retrain rule says no
+        type: boolean
+        default: false
+      deploy:
+        description: Redeploy production after a promotion (only for sms-spam, from main)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# A CT run that deploys shares the production lock with deploy.yml.
+concurrency:
+  group: ${{ inputs.deploy && inputs.model_name == 'sms-spam' && 'production' || format('ct-{0}', inputs.model_name) }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+jobs:
+  ct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-train.txt
+
+      - name: Configure DVC remote credentials
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          [ -n "$AZURE_STORAGE_CONNECTION_STRING" ] || { echo "::error::Missing secret AZURE_STORAGE_CONNECTION_STRING"; exit 1; }
+          # .dvc/config.local is ignored by Git and lives only on this runner.
+          dvc remote modify --local azure connection_string "$AZURE_STORAGE_CONNECTION_STRING"
+
+      # Deploying restarts Render on the image of this commit, which deploy.yml pushed
+      # when it was merged into main: only possible for sms-spam, from main.
+      - name: Deployment settings
+        id: deploy
+        env:
+          WANT_DEPLOY: ${{ inputs.deploy }}
+          MODEL_NAME: ${{ inputs.model_name }}
+        run: |
+          deploy=false
+          if [ "$WANT_DEPLOY" = "true" ] && [ "$MODEL_NAME" = "sms-spam" ]; then
+            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              deploy=true
+            else
+              echo "::warning::deploy ignored: CT only deploys when run from main (ref: $GITHUB_REF)"
+            fi
+          fi
+          echo "enabled=$deploy" >> "$GITHUB_OUTPUT"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Run CT pipeline
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          PROD_URL: ${{ vars.PROD_URL }}
+          DATASET_VERSION: ${{ inputs.dataset_version }}
+          MODEL_NAME: ${{ inputs.model_name }}
+          FORCE_TRAIN: ${{ inputs.force_train }}
+          DEPLOY: ${{ steps.deploy.outputs.enabled }}
+        run: |
+          args="--data-version $DATASET_VERSION --model-name $MODEL_NAME --pull"
+          [ "$FORCE_TRAIN" = "true" ] && args="$args --force-train"
+          [ "$DEPLOY" = "true" ] && args="$args --deploy"
+          python -m ml.ct_pipeline $args
