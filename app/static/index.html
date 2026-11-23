@@ -4,8 +4,127 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SMS Spam Detector</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6677; --border: #d9dde5;
+      --accent: #2f5bd3; --spam: #c0392b; --spam-bg: #fdecea; --ham: #1e8449; --ham-bg: #e8f6ee;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14171c; --card: #1d2128; --text: #e6e9ef; --muted: #9aa3b2; --border: #313744;
+        --accent: #7c9cf5; --spam: #f1948a; --spam-bg: #3a2020; --ham: #82e0aa; --ham-bg: #1b3326;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 16px; }
+    h1 { margin: 0 0 4px; font-size: 1.6rem; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    textarea {
+      width: 100%; min-height: 120px; resize: vertical; padding: 12px; font: inherit;
+      color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .row { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 12px; }
+    .count { color: var(--muted); font-size: .85rem; }
+    button {
+      font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--accent);
+      background: var(--accent); color: #fff; padding: 8px 20px;
+    }
+    button:disabled { opacity: .6; cursor: wait; }
+    .examples { margin-top: 24px; }
+    .examples h2 { font-size: 1rem; margin: 0 0 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      padding: 6px 12px; font-size: .9rem; text-align: left;
+    }
+    .result { margin-top: 16px; padding: 16px; border-radius: 8px; display: none; }
+    .result.spam { display: block; background: var(--spam-bg); color: var(--spam); }
+    .result.ham { display: block; background: var(--ham-bg); color: var(--ham); }
+    .result.error { display: block; background: var(--spam-bg); color: var(--spam); }
+    .label { font-size: 1.4rem; font-weight: 700; text-transform: uppercase; }
+    .meta { color: var(--muted); font-size: .85rem; margin-top: 24px; }
+  </style>
 </head>
 <body>
-  <!-- UI implemented in phase 4 -->
+<main>
+  <h1>SMS Spam Detector</h1>
+  <p class="sub">Paste an SMS (English) and check whether it is spam.</p>
+
+  <div class="card">
+    <label for="text" class="count">Message (1 to 1000 characters)</label>
+    <textarea id="text" maxlength="1000" placeholder="Type or paste an SMS..."></textarea>
+    <div class="row">
+      <span class="count" id="count">0 / 1000</span>
+      <button id="go">Check</button>
+    </div>
+    <div id="result" class="result" aria-live="polite"></div>
+  </div>
+
+  <div class="examples">
+    <h2>Examples</h2>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <p class="meta" id="meta">Loading model information...</p>
+</main>
+<script>
+  const EXAMPLES = [
+    "WINNER!! You have been selected to receive a £900 prize reward! Call 09061701461 to claim.",
+    "URGENT! Your mobile number has won a £2000 bonus. Text CLAIM to 87575 now.",
+    "Free entry in a weekly competition to win FA Cup final tickets. Text FA to 87121.",
+    "Hey, are we still meeting for lunch tomorrow?",
+    "I'll be home late tonight, don't wait for me for dinner.",
+    "Can you send me the notes from today's class? Thanks!"
+  ];
+  const $ = (id) => document.getElementById(id);
+  const text = $("text"), result = $("result"), go = $("go");
+
+  for (const ex of EXAMPLES) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = ex;
+    b.onclick = () => { text.value = ex; updateCount(); predict(); };
+    $("chips").appendChild(b);
+  }
+
+  function updateCount() { $("count").textContent = `${text.value.length} / 1000`; }
+  text.addEventListener("input", updateCount);
+
+  function show(cls, html) { result.className = "result " + cls; result.innerHTML = html; }
+
+  async function predict() {
+    go.disabled = true;
+    try {
+      const r = await fetch("/predict", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({text: text.value})
+      });
+      const data = await r.json();
+      if (r.status === 422) { show("error", "Invalid input: the message must contain 1 to 1000 characters."); return; }
+      if (!r.ok) { show("error", "The model is not ready yet, please retry in a few seconds."); return; }
+      const pct = (data.spam_probability * 100).toFixed(1);
+      show(data.label,
+        `<div class="label">${data.label}</div>` +
+        `<div>Spam probability: ${pct}%</div>` +
+        `<div class="count">Model ${data.model_name} · version ${data.model_version}</div>`);
+    } catch (e) {
+      show("error", "Network error: " + e.message);
+    } finally {
+      go.disabled = false;
+    }
+  }
+  go.onclick = predict;
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) predict(); });
+
+  fetch("/model-info").then((r) => r.json()).then((m) => {
+    $("meta").textContent = m.version
+      ? `Serving ${m.model_name} version ${m.version} (alias "${m.alias}", data ${m.data_version ?? "?"}, loaded ${m.loaded_at})`
+      : "Model not loaded yet.";
+  }).catch(() => { $("meta").textContent = "Model information unavailable."; });
+</script>
 </body>
 </html>
