@@ -40,3 +40,6 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Course brief: kept locally, never versioned
+docs/BRIEF_CLAUDE_CODE.pdf

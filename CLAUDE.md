@@ -1,6 +1,7 @@
 # CLAUDE.md — Détecteur de spam SMS en production
 
-Source de vérité : `docs/BRIEF_CLAUDE_CODE.pdf`. Ce fichier résume les règles (section 1) et les
+Source de vérité : le brief du projet (`docs/BRIEF_CLAUDE_CODE.pdf`, gardé en local et
+volontairement non versionné). Ce fichier résume les règles (section 1) et les
 décisions techniques (section 3). En cas de doute, relire le brief.
 
 ## Règles de travail (obligatoires)
