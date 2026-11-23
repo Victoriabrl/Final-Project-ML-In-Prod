@@ -1,0 +1,114 @@
+# Manual rollback (Actions > rollback > Run workflow): move the champion alias to an
+# approved version, redeploy production and smoke test it with the target version.
+# If production does not serve the target, the alias goes back to the version it had
+# before, production is redeployed and checked, and the job fails. (Render itself keeps
+# the previous instance while a new one fails its /ready health check.)
+name: rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: Version to serve (empty = previous_champion tag of the current champion)
+        type: string
+        required: false
+        default: ""
+      model_name:
+        description: Registered model (sms-spam-staging is never deployed)
+        type: choice
+        options: [sms-spam, sms-spam-staging]
+        default: sms-spam
+      deploy:
+        description: Redeploy and smoke test production (only for sms-spam, from main)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.deploy && inputs.model_name == 'sms-spam' && 'production' || format('rollback-{0}', inputs.model_name) }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+  MODEL_NAME: ${{ inputs.model_name }}
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements.txt
+
+      - name: Deployment settings
+        id: settings
+        env:
+          WANT_DEPLOY: ${{ inputs.deploy }}
+          PROD_URL: ${{ vars.PROD_URL }}
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          deploy=false
+          if [ "$WANT_DEPLOY" = "true" ] && [ "$MODEL_NAME" = "sms-spam" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::warning::deploy ignored: rollback only redeploys when run from main (ref: $GITHUB_REF)"
+            elif [ -z "$PROD_URL" ] || [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+              echo "::error::Missing PROD_URL (variable) or RENDER_DEPLOY_HOOK_URL (secret)"; exit 1
+            else
+              deploy=true
+            fi
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+          # Image of this commit, pushed by deploy.yml when it was merged into main.
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      # Refuses (exit 1, nothing changed) a missing or non-approved target.
+      - name: Move champion alias
+        id: rollback
+        env:
+          TARGET: ${{ inputs.target_version }}
+        run: |
+          set -- --model-name "$MODEL_NAME" --reason "rollback.yml run ${GITHUB_RUN_ID} by ${GITHUB_ACTOR}"
+          [ -n "$TARGET" ] && set -- "$@" --version "$TARGET"
+          python -m ml.rollback "$@"
+
+      - name: Redeploy production
+        id: redeploy
+        if: steps.settings.outputs.deploy == 'true'
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: sh scripts/deploy_render.sh "$IMAGE"
+
+      - name: Smoke test production with the target version
+        id: smoke
+        if: steps.settings.outputs.deploy == 'true'
+        run: |
+          python scripts/smoke_test.py --url "${{ vars.PROD_URL }}" \
+            --expected-version "${{ steps.rollback.outputs.to_version }}" --timeout 900
+
+      # Production does not serve the target: put the alias back, redeploy, verify, fail.
+      - name: Restore previous champion
+        if: >-
+          failure() && steps.settings.outputs.deploy == 'true'
+          && steps.rollback.outputs.changed == 'true'
+          && steps.rollback.outputs.from_version != ''
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          FROM: ${{ steps.rollback.outputs.from_version }}
+        run: |
+          echo "::error::Production did not serve the target version: restoring version $FROM"
+          python -m ml.rollback --model-name "$MODEL_NAME" --version "$FROM" \
+            --reason "restore after failed rollback (run ${GITHUB_RUN_ID})"
+          sh scripts/deploy_render.sh "$IMAGE"
+          python scripts/smoke_test.py --url "${{ vars.PROD_URL }}" \
+            --expected-version "$FROM" --timeout 900
+          exit 1

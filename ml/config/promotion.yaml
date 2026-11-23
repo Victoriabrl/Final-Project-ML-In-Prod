@@ -1,0 +1,8 @@
+# Frozen before any candidate evaluation.
+metric: f1_spam
+direction: maximize        # higher is better
+quality_floor: 0.85        # candidate must reach at least this score
+min_improvement: 0.01      # and beat the champion by at least this delta
+retrain_when:
+  - new_data_version       # requested version != champion's data_version tag
+  - champion_below_floor   # champion no longer passes the floor on the held-out
