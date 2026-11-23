@@ -1,1 +1,34 @@
-"""Configuration read from environment variables (phase 4)."""
+"""Configuration read from environment variables (12-factor III). No secret has a default."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Settings:
+    # None = let MLflow read MLFLOW_TRACKING_URI itself (credentials are read by MLflow
+    # from MLFLOW_TRACKING_USERNAME / MLFLOW_TRACKING_PASSWORD, never stored here).
+    mlflow_tracking_uri: str | None
+    model_name: str
+    model_alias: str
+    require_approved: bool
+    retry_initial_delay: float
+    retry_max_delay: float
+
+
+def _bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_settings() -> Settings:
+    """Read the environment at call time (not import time) so tests can override it."""
+    return Settings(
+        mlflow_tracking_uri=os.environ.get("MLFLOW_TRACKING_URI") or None,
+        model_name=os.environ.get("MODEL_NAME", "sms-spam"),
+        model_alias=os.environ.get("MODEL_ALIAS", "champion"),
+        require_approved=_bool(os.environ.get("REQUIRE_APPROVED", "true")),
+        retry_initial_delay=float(os.environ.get("MODEL_LOAD_RETRY_INITIAL_DELAY", "2")),
+        retry_max_delay=float(os.environ.get("MODEL_LOAD_RETRY_MAX_DELAY", "60")),
+    )
