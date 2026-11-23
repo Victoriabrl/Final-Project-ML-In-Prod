@@ -1,1 +1,19 @@
-# Candidate: word 1-2-grams + char_wb 3-5, C=10, class_weight=balanced (details in phase 3)
+# Candidate: union of word 1-2-grams and char_wb 3-5-grams, stronger C, balanced classes.
+name: candidate
+features:
+  word:
+    analyzer: word
+    ngram_range: [1, 2]
+    lowercase: true
+    sublinear_tf: true
+  char:
+    analyzer: char_wb
+    ngram_range: [3, 5]
+    lowercase: true
+    sublinear_tf: true
+classifier:
+  C: 10.0
+  class_weight: balanced
+  max_iter: 1000
+  solver: liblinear
+  random_state: 42

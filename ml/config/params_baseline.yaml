@@ -1,1 +1,15 @@
-# Baseline: word unigrams, C=1.0 (details in phase 3)
+# Baseline: TF-IDF on word unigrams + logistic regression.
+# class_weight=balanced: without it, C=1.0 on v1 (93 spams) gives f1_spam=0.25 (see README_experiments).
+name: baseline
+features:
+  word:
+    analyzer: word
+    ngram_range: [1, 1]
+    lowercase: true
+    sublinear_tf: true
+classifier:
+  C: 1.0
+  class_weight: balanced
+  max_iter: 1000
+  solver: liblinear
+  random_state: 42
