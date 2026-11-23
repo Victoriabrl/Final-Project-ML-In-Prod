@@ -16,6 +16,8 @@ class Settings:
     require_approved: bool
     retry_initial_delay: float
     retry_max_delay: float
+    # Baked into the image at build time (Dockerfile ARG GIT_SHA); None outside an image.
+    git_sha: str | None = None
 
 
 def _bool(value: str) -> bool:
@@ -31,4 +33,5 @@ def get_settings() -> Settings:
         require_approved=_bool(os.environ.get("REQUIRE_APPROVED", "true")),
         retry_initial_delay=float(os.environ.get("MODEL_LOAD_RETRY_INITIAL_DELAY", "2")),
         retry_max_delay=float(os.environ.get("MODEL_LOAD_RETRY_MAX_DELAY", "60")),
+        git_sha=os.environ.get("GIT_SHA") or None,
     )

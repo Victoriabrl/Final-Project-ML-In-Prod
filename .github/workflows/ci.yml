@@ -1,0 +1,124 @@
+# Pull request checks. The job names (lint, tests, docker-smoke) are the required
+# status checks of the dev / staging / main branch protection: keep them stable.
+name: ci
+
+on:
+  pull_request:
+    branches: [dev, staging, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install ruff (version pinned in requirements-dev.txt)
+        run: pip install "$(grep '^ruff==' requirements-dev.txt)"
+      - name: ruff check
+        run: ruff check --output-format=github .
+      - name: ruff format --check
+        run: ruff format --check .
+
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      # Local temporary MLflow registry (conftest.py), no network and no secret.
+      - name: pytest
+        run: pytest -q --junitxml=pytest-report.xml
+      - name: Summary
+        if: always()
+        run: |
+          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          try:
+              s = ET.parse("pytest-report.xml").getroot().find("testsuite")
+          except (FileNotFoundError, ET.ParseError):
+              print("### Tests: no report"); raise SystemExit
+          t, f, e, k = (int(s.get(x, 0)) for x in ("tests", "failures", "errors", "skipped"))
+          icon = "✅" if f + e == 0 else "❌"
+          print(f"### Tests {icon}\n\n{t} tests, {f} failures, {e} errors, {k} skipped")
+          EOF
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      IMAGE: sms-spam:ci
+      MLFLOW_PORT: "5001"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      # Full mlflow (server + sqlite backend) for the test registry; the image itself
+      # only has mlflow-skinny, which cannot read a sqlite registry: the container
+      # therefore reaches the test registry over HTTP instead of a mounted volume.
+      - run: pip install -r requirements-train.txt
+
+      - name: Build image
+        run: docker build --build-arg GIT_SHA="${{ github.sha }}" -t "$IMAGE" .
+
+      - name: Start test MLflow server
+        run: |
+          mkdir -p /tmp/registry
+          nohup mlflow server --host 0.0.0.0 --port "$MLFLOW_PORT" \
+            --backend-store-uri sqlite:////tmp/registry/mlflow.db \
+            --artifacts-destination /tmp/registry/artifacts \
+            --allowed-hosts "localhost:$MLFLOW_PORT,127.0.0.1:$MLFLOW_PORT,host.docker.internal:$MLFLOW_PORT" \
+            > /tmp/mlflow.log 2>&1 &
+          for i in $(seq 60); do
+            curl -fsS "http://127.0.0.1:$MLFLOW_PORT/health" > /dev/null && exit 0
+            sleep 2
+          done
+          cat /tmp/mlflow.log; exit 1
+
+      - name: Create test registry (v1 = champion, v2 = newer candidate)
+        run: python -m scripts.make_test_registry --tracking-uri "http://127.0.0.1:$MLFLOW_PORT"
+
+      - name: Run container
+        run: |
+          docker run -d --name app -p 8080:8080 \
+            --add-host=host.docker.internal:host-gateway \
+            -e PORT=8080 \
+            -e MLFLOW_TRACKING_URI="http://host.docker.internal:$MLFLOW_PORT" \
+            "$IMAGE"
+
+      - name: Smoke test
+        run: |
+          python scripts/smoke_test.py --url http://localhost:8080 \
+            --expected-version 1 --expected-git-sha "${{ github.sha }}" --timeout 180
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker logs app || true
+          tail -n 100 /tmp/mlflow.log || true
+
+      - name: Image size
+        if: always()
+        run: |
+          size=$(docker image inspect "$IMAGE" --format '{{.Size}}' 2>/dev/null || echo 0)
+          echo "Image size: $((size / 1024 / 1024)) MB" >> "$GITHUB_STEP_SUMMARY"

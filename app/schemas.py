@@ -40,3 +40,10 @@ class Status(BaseModel):
     status: str
     model_version: str | None = None
     detail: str | None = None
+
+
+class Health(BaseModel):
+    status: str
+    # Commit the image was built from (GIT_SHA build arg): lets CD check that the live
+    # URL serves the new image and not the previous instance kept by Render.
+    git_sha: str | None = None
