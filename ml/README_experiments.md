@@ -149,16 +149,48 @@ Scénario prévu d'après les scores mesurés (entraînement déterministe) :
 À éviter : `ct.yml` v1 avec `force_train` après l'amorçage promouvrait le candidat v1 (0,930,
 +0,046) et décalerait les numéros de version du scénario.
 
+Résultats réels (2026-11-23 et 2026-11-24, modèle `sms-spam`, workflows lancés depuis `main`) :
+
 | # | Run `ct-decision` / `rollback` | Décision | Champion avant → après | Lien Actions |
 |---|---|---|---|---|
-| 1 | _à compléter_ | | | |
-| 2 | _à compléter_ | | | |
-| 3 | _à compléter_ | | | |
-| 4 | _à compléter_ | | | |
+| 1 | `904c7bbde38a4111acebc8046346e4c1` | promoted (amorçage, baseline 0,8837 ≥ 0,85) | aucun → 1 | [run 45247481242](https://github.com/Victoriabrl/Final-Project-ML-In-Prod/actions/runs/45247481242) |
+| 2a | `5fc1a9d3…`, `a56c691c…`, `204ef291…` | failed → alias restauré | 1 → 1 (versions 2, 3, 4 `rejected`) | [run 45405778332](https://github.com/Victoriabrl/Final-Project-ML-In-Prod/actions/runs/45405778332) (tentatives 1 à 3) |
+| 2b | `eb8e9a7a1e64494abcbd6954cebd0169` | promoted (0,9528 vs 0,8837, +0,0690) | 1 → 5 | [run 45423387046](https://github.com/Victoriabrl/Final-Project-ML-In-Prod/actions/runs/45423387046) |
+| 3 | `1b6983e83f6f49c58d98e9f1827c9386` | rejected (0,9528 vs 0,9528, +0,0000 < 0,01), version 6 | 5 → 5, pas de redéploiement | [run 45424921198](https://github.com/Victoriabrl/Final-Project-ML-In-Prod/actions/runs/45424921198) |
+| 4a | `2eeadb3137be42bab6a5c00df8b66dfa` (rollback) | cible par défaut = `previous_champion` | 5 → 1 | [run 45426082262](https://github.com/Victoriabrl/Final-Project-ML-In-Prod/actions/runs/45426082262) |
+| 4b | `897702d4a37d44a4b25ab8a04337201f` (rollback) | cible explicite `5` | 1 → 5 | [run 45426583521](https://github.com/Victoriabrl/Final-Project-ML-In-Prod/actions/runs/45426583521) |
+
+**Écart au scénario (démo 2a).** Les trois premiers lancements du CT v2 ont bien promu le
+candidat, mais la vérification de production a échoué : le CT redéploie **la même image**
+(seul l'alias change) et Render garde l'ancienne instance en service tant que la nouvelle
+n'est pas prête. Le smoke test lisait donc `/ready` sur l'ancienne instance (version 1) et
+échouait immédiatement. À chaque fois, le pipeline a fait ce qui est prévu en cas d'échec :
+alias remis sur la version 1, version candidate marquée `rejected` (`status_reason` :
+« production did not serve the new version after promotion »), production revérifiée en
+version 1, workflow en échec. La production n'a jamais servi de modèle non vérifié.
+Correctif (PR #26) : `scripts/smoke_test.py` attend que `/ready` annonce la version de
+modèle attendue (valable aussi pour `rollback.yml`). Les tentatives 2 et 3 étaient des
+« Re-run » du run d'origine, qui réutilisent le commit `2d63c16` d'avant le correctif ; le
+lancement suivant depuis `main` (`36807d9`) a réussi (2b). Les versions 2 à 4 sont gardées
+dans le registry comme trace. Les numéros de version diffèrent donc du scénario prévu
+(champion final = version 5 au lieu de 2).
 
 ## Choix du modèle de production
 
-_À compléter après les démonstrations CT (phase 9)._ Scénario attendu d'après les mesures
-ci-dessus : la baseline v1 (0,884) devient le premier champion ; le candidat entraîné sur v2
-(0,953) l'améliore de +0,069 et est promu ; un nouveau candidat v2 identique (égalité) est
-rejeté et le champion est conservé.
+Le modèle servi en production est **`sms-spam` version 5** (alias `champion`) : le candidat
+TF-IDF (mots 1-2-grammes + caractères `char_wb` 3-5) + régression logistique (C = 10) entraîné sur la release **v2**, run
+`029562c467804cdc9430c28e2f9ee6b7`, commit `36807d9`.
+
+| Version | Modèle | Données | F1 spam (held-out) | Statut |
+|---|---|---|---|---|
+| 1 | baseline | v1 | 0,8837 | approved (premier champion, `previous_champion` de la 5) |
+| 2, 3, 4 | candidat | v2 | 0,9528 | rejected (vérification de production, voir démo 2a) |
+| **5** | candidat | v2 | **0,9528** | **approved, champion** |
+| 6 | candidat | v2 | 0,9528 | rejected (amélioration +0,0000 < 0,01) |
+
+Pourquoi ce modèle : c'est le meilleur sur la métrique principale (F1 spam 0,953 contre
+0,884 pour la baseline, +0,069), au-dessus du plancher de 0,85, avec une précision spam de
+0,960 (peu de faux positifs, donc peu de vrais SMS bloqués) et un rappel de 0,945. Il a été
+choisi par la règle de promotion figée (`ml/config/promotion.yaml`), sans intervention
+manuelle, puis vérifié en production par le smoke test. La version 1 reste disponible comme
+cible de rollback (démo 4a).
