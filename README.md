@@ -45,6 +45,7 @@ Tant qu'aucun modèle approuvé n'est chargé, `/predict` et `/ready` renvoient 
 | `GET /model-info` | version servie et sa provenance (run MLflow, version de données) |
 | `GET /health` | liveness : le processus tourne (+ commit Git de l'image) |
 | `GET /ready` | readiness : `200` seulement si le modèle approuvé est chargé et qu'une prédiction de test réussit |
+| `GET /metrics` | métriques Prometheus (requêtes, latence, prédictions par classe et version, `model_info`, `feature_drift`) — voir [docs/MONITORING.md](docs/MONITORING.md) |
 
 ## Lancement local
 
@@ -95,7 +96,7 @@ feature/<sujet> ──PR──▶ dev ──PR──▶ staging ──PR──�
 
 | Workflow | Déclencheur | Effet |
 |---|---|---|
-| `ci.yml` | PR vers `dev`, `staging`, `main` | Jobs `lint` (ruff), `tests` (pytest, registry MLflow local), `docker-smoke` (build de l'image, serveur MLflow de test, conteneur lancé, `smoke_test.py`). Un échec bloque le merge. |
+| `ci.yml` | PR vers `dev`, `staging`, `main` | Jobs `lint` (ruff + syntaxe du monitoring : `promtool check config`, `docker compose config`), `tests` (pytest, registry MLflow local), `docker-smoke` (build de l'image, serveur MLflow de test, conteneur lancé, `smoke_test.py` avec `/metrics` et `model_info`, logs 100 % JSON avec `request_id`). Un échec bloque le merge. |
 | `staging.yml` | push sur `staging` (= merge) | Build de l'image `ghcr.io/<owner>/<repo>:sha-<commit>`, lancée dans Actions contre le vrai registry DagsHub, smoke test avec la version du champion, puis push sur GHCR. |
 | `deploy.yml` | push sur `main` (= merge) | Build + vérification de l'image en conteneur, push GHCR, deploy hook Render avec `imgURL`, attente que l'URL live serve ce commit (`/health`), smoke test sur `PROD_URL` (vraie prédiction + version attendue). Un seul déploiement à la fois. |
 | `ct.yml` | `workflow_dispatch` (`dataset_version`, `model_name`, `force_train`, `deploy`) | Continuous training : `dvc pull` + validation → score du champion → règle de réentraînement → entraînement et comparaison (plancher + amélioration minimale) → promotion + redéploiement + vérification live, ou champion conservé ; alias restauré si la prod ne suit pas. |
@@ -120,6 +121,7 @@ data/       fichiers .dvc uniquement (les données sont sur Azure Blob)
 - [DEPLOYMENT.md](DEPLOYMENT.md) : architecture, 12 facteurs, CD, CT, rollback, comportement en cas d'échec
 - [ml/README_data.md](ml/README_data.md) : source et licence des données, split, versions v1 / v2
 - [ml/README_experiments.md](ml/README_experiments.md) : métrique, règle de promotion, runs MLflow
+- [docs/MONITORING.md](docs/MONITORING.md) : monitoring (rejeu de trafic, logs, métriques, dashboard, alertes)
 
 ## Équipe
 

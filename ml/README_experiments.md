@@ -175,6 +175,62 @@ lancement suivant depuis `main` (`36807d9`) a réussi (2b). Les versions 2 à 4 
 dans le registry comme trace. Les numéros de version diffèrent donc du scénario prévu
 (champion final = version 5 au lieu de 2).
 
+## Drift des entrées (profil d'entraînement)
+
+Le modèle prend du texte libre : le drift est mesuré sur des **statistiques simples** de
+chaque SMS, jamais sur le texte lui-même (rien n'est stocké) :
+
+| Feature | Ce qu'elle capte |
+|---|---|
+| `length_chars` | longueur du message (les spams sont deux fois plus longs) |
+| `digit_ratio` | part de chiffres (numéros surtaxés, codes, montants) |
+| `upper_ratio` | part de majuscules parmi les lettres (« WINNER!! ») |
+| `has_url_or_phone` | présence d'un lien ou d'un nombre d'au moins 5 chiffres |
+| `spam_probability` | sortie du modèle (distribution des scores) |
+
+- **Profil** : `ml/train.py` logge `monitoring/training-profile.json` dans chaque run
+  d'entraînement : bins aux déciles (ou entre les valeurs distinctes pour une feature
+  binaire) et proportions de référence. Les statistiques de texte viennent du split
+  d'entraînement ; les scores viennent du modèle sur le held-out (données jamais vues,
+  comme le trafic réel ; sur le train, les scores seraient trop sûrs d'eux).
+- **Mesure** : PSI (*Population Stability Index*) par feature, **seuil 0,20** (lecture
+  usuelle : < 0,10 stable, 0,10–0,20 décalage modéré, ≥ 0,20 décalage significatif).
+- **Un seul code** : `app/drift.py` sert à l'entraînement (profil), au CT (`drift.json`) et
+  à l'API (jauge `feature_drift`, étape monitoring), donc les valeurs ont le même sens
+  partout. Il est dans `app/` car l'image de production ne contient que ce dossier.
+- **CT** : quand le champion a un profil, le run `ct-decision` logge `drift.json` (nouvelle
+  release comparée au profil du champion), la métrique `drift_max_psi` et le tag
+  `drift_status` (`ok` / `drift` / `no_profile`). Le drift **ne déclenche pas** de
+  réentraînement : la règle reste celle de `promotion.yaml` ; un drift est un signal pour
+  **enquêter**.
+- **Champion antérieur aux profils** : `python -m ml.backfill_profile --model-name sms-spam
+  --version 5` recalcule le profil comme `train.py` et l'ajoute au run d'origine de la
+  version (tag `profile_backfilled=true`), sans réentraîner ni modifier le modèle.
+
+Contrôle sur les vraies données (profil = train v1, scores simulés par le label) :
+
+| Lot comparé | PSI max | Features au-dessus de 0,20 |
+|---|---|---|
+| held-out v1 complet (1 032 SMS) | 0,026 | aucune |
+| 500 SMS tirés du held-out | 0,045 | aucune |
+| 100 SMS tirés du held-out | 0,236 | `length_chars` (bruit d'échantillonnage) |
+| spams seuls (« campagne », 128 SMS) | 9,78 | les 5 (longueur, chiffres, majuscules, liens, score) |
+
+Sur 100 messages, le hasard suffit à franchir le seuil : d'où la fenêtre de **500**
+prédictions côté API.
+
+**Même seuil côté API et côté CT.** L'API (`app/drift_monitor.py`) compare les 500 dernières
+prédictions au profil du champion chargé, avec la même fonction (`feature_psi`), les mêmes bins
+(ceux du profil) et le même seuil (`DRIFT_THRESHOLD = 0,20`, aussi écrit dans le profil) que le
+`drift.json` du CT : une valeur de `feature_drift` et une valeur de `drift.json` se lisent de
+la même façon. L'alerte Grafana « drift » utilise ce seuil (≥ 0,20 pendant 2 min) et dit
+d'enquêter ; le réentraînement reste décidé par la règle de `promotion.yaml` (voir
+`docs/MONITORING.md`).
+
+Une valeur qui concentre au moins un dixième des messages de référence (par exemple 0 chiffre,
+ou 0 majuscule) a son propre bin, pour qu'un passage de « jamais » à « souvent » se voie
+(sinon tous les déciles tombent sur la même valeur et le PSI reste à 0).
+
 ## Choix du modèle de production
 
 Le modèle servi en production est **`sms-spam` version 5** (alias `champion`) : le candidat

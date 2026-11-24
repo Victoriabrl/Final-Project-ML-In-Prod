@@ -4,21 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
+from app.logging_config import configure_logging, get_logger
+from app.metrics import CONTENT_TYPE_LATEST, Metrics
 from app.model_loader import ModelLoader, ModelNotReadyError
+from app.request_context import install_request_context
 from app.schemas import Health, ModelInfo, PredictRequest, PredictResponse, Status
 from app.settings import Settings, get_settings
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logger = logging.getLogger("app")
+configure_logging()
+log = get_logger("app")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -33,9 +36,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        logger.info("Shutdown complete")
+        log.info("shutdown_complete")
 
     app = FastAPI(title="SMS spam detector", version="1.0.0", lifespan=lifespan)
+    app.state.metrics = Metrics()
+    install_request_context(app)
 
     def loader_of(request: Request) -> ModelLoader:
         return request.app.state.loader
@@ -86,18 +91,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/predict", response_model=PredictResponse, responses={503: {"model": Status}})
     def predict(body: PredictRequest, request: Request):
+        started = time.perf_counter()
         try:
             label, prob, current = loader_of(request).predict(body.text)
         except ModelNotReadyError as exc:
+            log.warning("prediction_unavailable", reason=str(exc))
             return JSONResponse(
                 status_code=503, content=Status(status="not ready", detail=str(exc)).model_dump()
             )
+        request.app.state.metrics.observe_prediction(label, current.version)
+        if current.drift is not None:
+            current.drift.observe(body.text, prob)  # features only, the text is not kept
+        # Never the text itself: only its size, the output and the served version.
+        log.info(
+            "prediction_made",
+            model_name=current.model_name,
+            model_version=current.version,
+            prediction=label,
+            score=round(prob, 4),
+            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            n_chars=len(body.text),
+            n_words=len(body.text.split()),
+        )
         return PredictResponse(
             label=label,
             spam_probability=prob,
             model_name=current.model_name,
             model_version=current.version,
         )
+
+    @app.get("/metrics", include_in_schema=True, response_class=Response)
+    def metrics(request: Request) -> Response:
+        """Prometheus metrics. Answers even before the model is loaded, but model_info only
+        appears once a model is loaded (it is refreshed from the loader on every scrape)."""
+        current = loader_of(request).current
+        registry = request.app.state.metrics
+        registry.set_model_version(current.version if current is not None else None)
+        drift = current.drift if current is not None else None
+        registry.set_feature_drift(drift.latest if drift is not None else None)
+        return Response(registry.generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
 

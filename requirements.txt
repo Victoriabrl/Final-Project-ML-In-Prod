@@ -8,3 +8,7 @@ pandas==3.0.6
 mlflow-skinny==3.17.1
 # MLflow 3 serializes sklearn models with skops by default (safe load, no pickle).
 skops==0.16.0
+# Structured JSON logs (monitoring).
+structlog==25.5.0
+# Prometheus metrics on /metrics (monitoring).
+prometheus-client==0.25.0
