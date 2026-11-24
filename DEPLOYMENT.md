@@ -49,6 +49,9 @@ secrète dans Git, dans l'image ou dans les logs.
 | `MLFLOW_TRACKING_PASSWORD` | idem (secret) | token DagsHub (lecture suffit pour Render) |
 | `MODEL_NAME` / `MODEL_ALIAS` | env (défauts `sms-spam` / `champion`) | modèle et alias résolus au démarrage |
 | `DRIFT_WINDOW_SIZE` / `DRIFT_RECOMPUTE_EVERY` | env (défauts `500` / `100`) | fenêtre de prédictions récentes et fréquence de recalcul du drift (`feature_drift`) |
+| `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` | `.env` (stack locale) | connexion Grafana |
+| `GF_SMTP_*` | `.env` (stack locale, secret) | serveur mail des alertes Grafana |
+| `PROMETHEUS_CONFIG` | `.env` (défaut `prometheus.yml`) | `prometheus.prod.yml` pour scraper la prod (démo) |
 | `LOG_LEVEL` | env (défaut `INFO`) | niveau des logs JSON (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `MLFLOW_CONFIGURE_LOGGING`, `MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR` | image (`false`) | MLflow n'installe pas son propre format de log ni de barre de progression : toutes les lignes restent du JSON |
 | `PORT` | fourni par Render | port d'écoute (défaut 8000) |

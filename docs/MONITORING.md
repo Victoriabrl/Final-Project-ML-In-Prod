@@ -218,3 +218,75 @@ de lancer le CT à la main.
 
 Le compteur repart à zéro à chaque démarrage (nouveau déploiement, CT, rollback, réveil de
 l'instance gratuite) : la jauge n'apparaît qu'après 500 nouvelles prédictions.
+
+## Stack locale Prometheus + Grafana (`docker compose`)
+
+```bash
+cp .env.example .env            # puis remplir MLFLOW_* (et GF_SMTP_* pour les alertes)
+docker compose up -d --build    # api :8000, prometheus :9090, grafana :3000
+python scripts/replay.py --file .exercise-data/normal.csv --rate 10 --shuffle
+```
+
+| Service | Image | Rôle |
+|---|---|---|
+| `api` | construite depuis le `Dockerfile` de production | même image qu'en prod, champion chargé depuis DagsHub |
+| `prometheus` | `prom/prometheus:v3.5.0` | scrape `api:8000/metrics` toutes les **5 s** (`monitoring/prometheus.yml`, job `api`) |
+| `grafana` | `grafana/grafana:12.1.0` | datasource et dashboard **provisionnés** au démarrage (aucun clic) ; SMTP par variables d'environnement |
+
+- Prometheus : <http://localhost:9090/targets> → la cible `api` doit être **UP**.
+- Grafana : <http://localhost:3000> (identifiants `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`
+  du `.env`, `admin` / `admin` par défaut en local) → dossier *SMS spam* → **SMS spam API**.
+- Arrêt : `docker compose down` (ajouter `-v` pour effacer aussi l'historique Grafana).
+
+Fichiers : `docker-compose.yml`, `monitoring/prometheus.yml`, `monitoring/prometheus.prod.yml`,
+`monitoring/grafana-datasource.yml`, `monitoring/grafana-dashboards.yml` (provider) et
+`monitoring/dashboard.json` (dashboard exporté, versionné, sans secret). La CI vérifie leur
+syntaxe (`promtool check config`, `docker compose config`) et `tests/test_monitoring_config.py`
+leur contenu (images épinglées, credentials uniquement par variables, 6 panneaux, seuil 0,20…).
+
+### Dashboard « SMS spam API » (6 panneaux)
+
+| Panneau | Requête | Lecture |
+|---|---|---|
+| Requests per second (/predict) | `sum by (status) (rate(http_requests_total{job="api",path="/predict"}[$__rate_interval]))` | trafic par statut (200 / 422 / 503) |
+| 5xx error rate (/predict) | `100 * sum(rate(...{status=~"5.."}...)) / sum(rate(...))` | % d'erreurs serveur, ligne rouge à 5 % (seuil de l'alerte) |
+| Latency p95 (/predict) | `histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{path="/predict"}[...])))` | latence p95 en secondes |
+| Predictions by class and model version | `sum by (prediction, model_version) (rate(predictions_total[...]))` | spam / ham **par version** : montre quelle version a servi chaque prédiction |
+| Input drift by feature (PSI) | `max by (feature) (feature_drift)` | une courbe par feature, **ligne rouge à 0,20** |
+| Served model version | `max by (model_version) (model_info)` | version concrète chargée (ex. `v5`) |
+
+Les panneaux de requêtes sont filtrés sur `path="/predict"` (pas les sondes `/ready`, ni les
+scrapes `/metrics`). Les compteurs repartent de 0 à chaque redémarrage : tous les panneaux
+utilisent `rate()`.
+
+Vérification réelle (stack locale, champion v5, 2026-11-24) : cible `api` UP ; 600 requêtes
+`normal.csv --broken` → ~8,6 req/s en 200 et ~2 req/s en 422, p95 ≈ 18 ms, version `v5` ;
+`feature_drift` max 0,025 après du trafic normal, puis 2,1 à 6,9 sur les 5 features après
+600 SMS de `campaign.csv`.
+
+Captures du dashboard : à ajouter dans `docs/img/` lors de la démonstration (trafic normal,
+puis campagne de spam, puis rollback).
+
+### Surveiller la production (option, pour la démo)
+
+```bash
+PROMETHEUS_CONFIG=prometheus.prod.yml docker compose up -d prometheus grafana
+```
+
+`monitoring/prometheus.prod.yml` scrape `https://final-project-ml-in-prod-sms-spam.onrender.com/metrics`
+toutes les 30 s sous le même job `api` : le dashboard et les alertes fonctionnent sans
+changement. Chaque scrape est une requête : l'instance gratuite ne s'endort plus tant que la
+stack tourne, donc on l'arrête après la démo (`docker compose down`). En dehors de ça, la
+production expose les mêmes logs (onglet *Logs* de Render) et le même `/metrics`.
+
+### Observer un rollback
+
+1. Trafic continu : `python scripts/replay.py --file .exercise-data/normal.csv --rate 5`.
+2. Lancer le rollback (Actions → rollback, ou `python -m ml.rollback --version 1`) : l'alias
+   `champion` passe à la version 1.
+3. L'API résout l'alias **au démarrage** : en prod le workflow redéploie ; en local,
+   `docker compose restart api`.
+4. Dashboard : « Served model version » passe de `v5` à `v1`, « Predictions by class and model
+   version » montre de nouvelles séries `(v1)` ; logs : `model_loaded` avec `model_version: "1"`
+   puis des `prediction_made` en version 1 (`jq` : prédictions par `model_version`).
+5. Retour au champion : rollback vers 5, puis `docker compose restart api` → `v5` à nouveau.

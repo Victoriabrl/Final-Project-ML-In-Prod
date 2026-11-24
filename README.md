@@ -96,7 +96,7 @@ feature/<sujet> ──PR──▶ dev ──PR──▶ staging ──PR──�
 
 | Workflow | Déclencheur | Effet |
 |---|---|---|
-| `ci.yml` | PR vers `dev`, `staging`, `main` | Jobs `lint` (ruff), `tests` (pytest, registry MLflow local), `docker-smoke` (build de l'image, serveur MLflow de test, conteneur lancé, `smoke_test.py`). Un échec bloque le merge. |
+| `ci.yml` | PR vers `dev`, `staging`, `main` | Jobs `lint` (ruff + syntaxe du monitoring : `promtool check config`, `docker compose config`), `tests` (pytest, registry MLflow local), `docker-smoke` (build de l'image, serveur MLflow de test, conteneur lancé, `smoke_test.py` avec `/metrics` et `model_info`, logs 100 % JSON avec `request_id`). Un échec bloque le merge. |
 | `staging.yml` | push sur `staging` (= merge) | Build de l'image `ghcr.io/<owner>/<repo>:sha-<commit>`, lancée dans Actions contre le vrai registry DagsHub, smoke test avec la version du champion, puis push sur GHCR. |
 | `deploy.yml` | push sur `main` (= merge) | Build + vérification de l'image en conteneur, push GHCR, deploy hook Render avec `imgURL`, attente que l'URL live serve ce commit (`/health`), smoke test sur `PROD_URL` (vraie prédiction + version attendue). Un seul déploiement à la fois. |
 | `ct.yml` | `workflow_dispatch` (`dataset_version`, `model_name`, `force_train`, `deploy`) | Continuous training : `dvc pull` + validation → score du champion → règle de réentraînement → entraînement et comparaison (plancher + amélioration minimale) → promotion + redéploiement + vérification live, ou champion conservé ; alias restauré si la prod ne suit pas. |
