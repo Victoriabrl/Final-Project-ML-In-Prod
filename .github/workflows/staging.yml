@@ -37,6 +37,19 @@ jobs:
           cache-dependency-path: requirements*.txt
       - run: pip install -r requirements.txt
 
+      # Without these repository secrets MLflow silently falls back to a local sqlite
+      # registry on the runner (MLflow 3 default), so fail early with a clear message.
+      - name: Check MLflow configuration
+        run: |
+          missing=""
+          for name in MLFLOW_TRACKING_URI MLFLOW_TRACKING_USERNAME MLFLOW_TRACKING_PASSWORD; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets (Settings > Secrets and variables > Actions):$missing"
+            exit 1
+          fi
+
       - name: Image name
         run: |
           repo="${GITHUB_REPOSITORY,,}"   # GHCR names must be lowercase

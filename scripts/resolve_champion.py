@@ -46,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 0 with found=false when there is no approved champion yet (bootstrap)",
     )
     args = parser.parse_args(argv)
+    if not (args.tracking_uri or os.environ.get("MLFLOW_TRACKING_URI")):
+        # MLflow would otherwise fall back to a local registry and answer for the wrong one.
+        print("ERROR: MLFLOW_TRACKING_URI is not set (and no --tracking-uri)", file=sys.stderr)
+        return 1
     client = MlflowClient(args.tracking_uri) if args.tracking_uri else None
     output = os.environ.get("GITHUB_OUTPUT")
     try:
