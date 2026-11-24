@@ -174,6 +174,12 @@ python scripts/smoke_test.py --url "$PROD_URL" --expected-version 1 --timeout 90
   l'arrêt n'est pas propre.
 - **Commit Git dans l'image (`/health`)** : Render garde l'ancienne instance pendant un
   déploiement ; vérifier le commit prouve que l'URL live sert la nouvelle image.
+- **Version du modèle attendue par le smoke test** : le CT et le rollback redéploient la
+  **même image** (seul l'alias change), donc le commit ne distingue pas l'ancienne instance
+  de la nouvelle. `scripts/smoke_test.py` attend que `/ready` annonce la version de modèle
+  attendue avant de vérifier la prédiction (ajouté par la PR #26 après les premiers essais du
+  CT v2, où la vérification lisait encore l'ancienne instance ; voir
+  `ml/README_experiments.md`, démo 2a).
 - **Amorçage sans champion** géré par staging et deploy (voir ci-dessus).
 
 ## Offre gratuite Render

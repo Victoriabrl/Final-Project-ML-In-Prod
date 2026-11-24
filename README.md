@@ -90,7 +90,7 @@ feature/<sujet> ──PR──▶ dev ──PR──▶ staging ──PR──�
   approuvées par un autre membre de l'équipe que l'auteur.
 - Promotion : PR `dev → staging`, puis PR `staging → main`, jamais de raccourci.
 - Les branches longues (`dev`, `staging`, `main`) sont protégées : PR obligatoire, 1 approbation,
-  checks CI requis (`lint`, `tests`, `docker-smoke`), branche à jour, pas de force-push.
+  checks CI requis (`lint`, `tests`, `docker-smoke`), ni suppression ni force-push.
 
 ## Workflows
 
