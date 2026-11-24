@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pandas as pd
 
+from app.logging_config import get_logger
 from app.settings import Settings
 
-logger = logging.getLogger(__name__)
+log = get_logger("app.model")
 
 SPAM = "spam"
 # Internal self-check run before declaring the service ready.
@@ -89,7 +89,14 @@ class ModelLoader:
         with self._lock:
             self._current = loaded
             self.last_error = None
-        logger.info("Loaded %s version %s (alias %s)", s.model_name, mv.version, s.model_alias)
+        log.info(
+            "model_loaded",
+            model_name=s.model_name,
+            model_version=loaded.version,
+            alias=s.model_alias,
+            run_id=loaded.run_id,
+            data_version=loaded.data_version,
+        )
         return loaded
 
     def try_load(self) -> bool:
@@ -98,14 +105,16 @@ class ModelLoader:
             return True
         except Exception as exc:  # registry down, alias missing, bad model...
             self.last_error = f"{type(exc).__name__}: {exc}"
-            logger.error("Model loading failed: %s", self.last_error)
+            log.error(
+                "model_load_failed", model_name=self.settings.model_name, error=self.last_error
+            )
             return False
 
     async def load_with_retry(self) -> None:
         """Background task: retry with exponential backoff until a model is loaded."""
         delay = self.settings.retry_initial_delay
         while not await asyncio.to_thread(self.try_load):
-            logger.info("Retrying model loading in %.0fs", delay)
+            log.info("model_load_retry", delay_s=delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.settings.retry_max_delay)
 
