@@ -56,10 +56,13 @@ services:
       GF_SMTP_PASSWORD: ${GF_SMTP_PASSWORD:-}
       GF_SMTP_FROM_ADDRESS: ${GF_SMTP_FROM_ADDRESS:-alerts@sms-spam.local}
       GF_SMTP_FROM_NAME: SMS spam monitoring
+      # Recipients of the alerts (monitoring/alerting/contact-points.yml).
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-team@example.com}
     volumes:
       - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
       - ./monitoring/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./monitoring/dashboard.json:/var/lib/grafana/dashboards/dashboard.json:ro
+      - ./monitoring/alerting:/etc/grafana/provisioning/alerting:ro
       - grafana-data:/var/lib/grafana
     depends_on:
       - prometheus

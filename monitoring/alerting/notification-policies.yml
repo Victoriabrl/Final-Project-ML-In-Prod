@@ -1,0 +1,10 @@
+# Default policy: every alert goes to the team email, "firing" then "resolved".
+apiVersion: 1
+
+policies:
+  - orgId: 1
+    receiver: team-email
+    group_by: ["alertname"]
+    group_wait: 10s
+    group_interval: 30s
+    repeat_interval: 4h
