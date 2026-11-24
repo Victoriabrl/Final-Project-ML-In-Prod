@@ -36,12 +36,18 @@ def request(method: str, url: str, body: dict | None = None, timeout: float = 30
 
 
 def wait_ready(
-    base: str, timeout: float, expected_git_sha: str | None = None, interval: float = 5
+    base: str,
+    timeout: float,
+    expected_git_sha: str | None = None,
+    interval: float = 5,
+    expected_version: str | None = None,
 ) -> dict:
-    """Wait until /ready is 200 (and, if given, /health reports the expected commit).
+    """Wait until /ready is 200 and, if given, serves the expected commit and model version.
 
-    Render keeps the previous instance serving until the new one is healthy, so after a
-    deploy the commit check is what proves the live URL runs the new image.
+    Render keeps the previous instance serving until the new one is healthy, so right
+    after a deploy the URL still answers with the old instance. The commit check proves
+    the new image is live; the model version check does the same when CT or rollback
+    redeploy the same image to load another version of the model.
     """
     deadline = time.monotonic() + timeout
     last = None
@@ -56,8 +62,14 @@ def wait_ready(
                     time.sleep(interval)
                     continue
             status, body = request("GET", f"{base}/ready", timeout=30)
-            if status == 200:
+            served = body.get("model_version") if isinstance(body, dict) else None
+            if status == 200 and (expected_version is None or served == str(expected_version)):
                 return body
+            if status == 200:
+                last = f"/ready serves model version {served!r}, expected {expected_version!r}"
+                print(f"  old instance ({last}), retrying in {interval:.0f}s", flush=True)
+                time.sleep(interval)
+                continue
             last = f"HTTP {status}: {str(body)[:200]}"
         # Not listening yet, cold start, or connection cut while an instance restarts.
         except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
@@ -83,7 +95,7 @@ def run(
             raise AssertionError(msg)
 
     print(f"Waiting for {base}/ready (timeout {timeout:.0f}s)", flush=True)
-    ready = wait_ready(base, timeout, expected_git_sha)
+    ready = wait_ready(base, timeout, expected_git_sha, expected_version=expected_version)
     if expected_git_sha is not None:
         check(True, f"/health serves commit {expected_git_sha}")
     check(True, f"/ready -> {ready}")
