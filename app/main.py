@@ -100,6 +100,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=503, content=Status(status="not ready", detail=str(exc)).model_dump()
             )
         request.app.state.metrics.observe_prediction(label, current.version)
+        if current.drift is not None:
+            current.drift.observe(body.text, prob)  # features only, the text is not kept
         # Never the text itself: only its size, the output and the served version.
         log.info(
             "prediction_made",
@@ -125,6 +127,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         current = loader_of(request).current
         registry = request.app.state.metrics
         registry.set_model_version(current.version if current is not None else None)
+        drift = current.drift if current is not None else None
+        registry.set_feature_drift(drift.latest if drift is not None else None)
         return Response(registry.generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
