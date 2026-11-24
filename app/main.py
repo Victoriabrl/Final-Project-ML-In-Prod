@@ -9,9 +9,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from app.logging_config import configure_logging, get_logger
+from app.metrics import CONTENT_TYPE_LATEST, Metrics
 from app.model_loader import ModelLoader, ModelNotReadyError
 from app.request_context import install_request_context
 from app.schemas import Health, ModelInfo, PredictRequest, PredictResponse, Status
@@ -38,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log.info("shutdown_complete")
 
     app = FastAPI(title="SMS spam detector", version="1.0.0", lifespan=lifespan)
+    app.state.metrics = Metrics()
     install_request_context(app)
 
     def loader_of(request: Request) -> ModelLoader:
@@ -97,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(
                 status_code=503, content=Status(status="not ready", detail=str(exc)).model_dump()
             )
+        request.app.state.metrics.observe_prediction(label, current.version)
         # Never the text itself: only its size, the output and the served version.
         log.info(
             "prediction_made",
@@ -114,6 +117,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             model_name=current.model_name,
             model_version=current.version,
         )
+
+    @app.get("/metrics", include_in_schema=True, response_class=Response)
+    def metrics(request: Request) -> Response:
+        """Prometheus metrics. Answers even before the model is loaded, but model_info only
+        appears once a model is loaded (it is refreshed from the loader on every scrape)."""
+        current = loader_of(request).current
+        registry = request.app.state.metrics
+        registry.set_model_version(current.version if current is not None else None)
+        return Response(registry.generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return app
 

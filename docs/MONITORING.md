@@ -125,3 +125,57 @@ jq -R -c 'fromjson? | select(.event == "model_loaded") | {timestamp, model_versi
 
 Ces filtres sont exécutés par `tests/test_log_queries.py` sur de vrais logs de l'application
 (en CI, où `jq` est installé), pour que la documentation reste juste.
+
+## Métriques Prometheus (`GET /metrics`)
+
+Exposées par `app/metrics.py` (`prometheus_client`, format texte). Chaque instance de l'app a
+son propre registre ; les compteurs repartent de 0 à chaque démarrage (déploiement, CT,
+rollback, réveil de l'instance gratuite) : dans PromQL, toujours `rate()` / `increase()`, jamais
+la valeur brute.
+
+| Métrique | Type | Labels | Mis à jour |
+|---|---|---|---|
+| `http_requests_total` | counter | `method`, `path`, `status` | chaque requête (middleware) |
+| `http_request_duration_seconds` | histogram | `path` | chaque requête (buckets par défaut, 5 ms → 10 s) |
+| `predictions_total` | counter | `prediction` (`spam` / `ham`), `model_version` | chaque prédiction réussie |
+| `model_info` | gauge = 1 | `model_version` | à chaque scrape, depuis le modèle chargé ; **absente tant qu'aucun modèle n'est chargé** |
+| `feature_drift` | gauge | `feature` (les 5 features de `app/drift.py`) | déclarée ; valeurs ajoutées par le suivi du drift (étape 5) |
+
+Règles de labels (faible cardinalité) :
+
+- `path` est le **modèle de route** (`/predict`, `/model-info`), jamais l'URL brute (pas de
+  query string) ; une route inconnue donne `<unmatched>` (pas un label par URL tapée) ;
+- jamais de `request_id`, de texte de SMS ni de valeur d'entrée en label ;
+- `model_version` est la **version concrète** chargée (ex. `5`), jamais l'alias `champion`.
+
+`/metrics` répond même avant le chargement du modèle (Prometheus voit l'API « up ») ;
+`/ready` reste la seule source de vérité pour « le modèle peut prédire ». Les scrapes de
+`/metrics` sont comptés dans `http_requests_total` mais logués au niveau `debug` seulement
+(une ligne toutes les 5 s sinon). L'endpoint est public : il n'expose rien de sensible
+(compteurs, version du modèle, PSI).
+
+Exemple réel (API locale, champion v5, après `replay.py --limit 100 --broken` puis le smoke test) :
+
+```text
+http_requests_total{method="POST",path="/predict",status="200"} 83.0
+http_requests_total{method="POST",path="/predict",status="422"} 19.0
+predictions_total{model_version="5",prediction="ham"} 65.0
+predictions_total{model_version="5",prediction="spam"} 18.0
+model_info{model_version="5"} 1.0
+```
+
+Requêtes PromQL utilisées par le dashboard (étape 6) :
+
+```promql
+sum(rate(http_requests_total{path="/predict"}[1m]))                                    # requêtes/s
+100 * sum(rate(http_requests_total{path="/predict",status=~"5.."}[2m]))
+    / sum(rate(http_requests_total{path="/predict"}[2m]))                              # % de 5xx
+histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{path="/predict"}[5m])))  # latence p95
+sum by (prediction) (rate(predictions_total[5m]))                                       # prédictions par classe
+max by (feature) (feature_drift)                                                        # drift par feature
+max by (model_version) (model_info)                                                     # version servie
+```
+
+**Smoke test** : `scripts/smoke_test.py` (CI `docker-smoke`, staging, déploiement, CT,
+rollback) vérifie aussi que `/metrics` répond, que `model_info` porte la **version attendue**
+et que `predictions_total` a compté les prédictions du test pour cette version.

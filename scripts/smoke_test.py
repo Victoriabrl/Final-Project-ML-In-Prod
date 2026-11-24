@@ -1,4 +1,5 @@
-"""Smoke test a running service: wait for /ready, check the model version, predict.
+"""Smoke test a running service: wait for /ready, check the model version, predict, and
+check that /metrics reports the same model version (model_info) and the predictions.
 
 Usage: python scripts/smoke_test.py --url URL [--expected-version N]
                                     [--expected-git-sha SHA] [--timeout 300]
@@ -11,6 +12,7 @@ import argparse
 import http.client
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -33,6 +35,15 @@ def request(method: str, url: str, body: dict | None = None, timeout: float = 30
             return exc.code, json.loads(payload)
         except ValueError:
             return exc.code, payload.decode(errors="replace")
+
+
+def request_text(url: str, timeout: float = 30) -> tuple[int, str]:
+    """GET a text endpoint (Prometheus /metrics)."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
 
 
 def wait_ready(
@@ -112,6 +123,17 @@ def run(
         check(pred["label"] == expected, f"{expected} example -> {pred['label']}")
         check(0.0 <= pred["spam_probability"] <= 1.0, f"probability {pred['spam_probability']}")
         check(pred["model_version"] == served, f"response model_version {pred['model_version']}")
+
+    status, metrics = request_text(f"{base}/metrics")
+    check(status == 200, f"/metrics HTTP {status}")
+    info = f'model_info{{model_version="{served}"}} 1.0'
+    check(info in metrics, f"/metrics {info}")
+    counted = sum(
+        float(value)
+        for labels, value in re.findall(r"^predictions_total\{([^}]*)\} (\S+)$", metrics, re.M)
+        if f'model_version="{served}"' in labels
+    )
+    check(counted >= 2, f"/metrics predictions_total for version {served} = {counted:.0f}")
     return lines
 
 

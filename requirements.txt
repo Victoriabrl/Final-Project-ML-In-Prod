@@ -10,3 +10,5 @@ mlflow-skinny==3.17.1
 skops==0.16.0
 # Structured JSON logs (monitoring).
 structlog==25.5.0
+# Prometheus metrics on /metrics (monitoring).
+prometheus-client==0.25.0

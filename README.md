@@ -45,6 +45,7 @@ Tant qu'aucun modèle approuvé n'est chargé, `/predict` et `/ready` renvoient 
 | `GET /model-info` | version servie et sa provenance (run MLflow, version de données) |
 | `GET /health` | liveness : le processus tourne (+ commit Git de l'image) |
 | `GET /ready` | readiness : `200` seulement si le modèle approuvé est chargé et qu'une prédiction de test réussit |
+| `GET /metrics` | métriques Prometheus (requêtes, latence, prédictions par classe et version, `model_info`, `feature_drift`) — voir [docs/MONITORING.md](docs/MONITORING.md) |
 
 ## Lancement local
 
