@@ -7,7 +7,7 @@ au démarrage et affichée par l'application.
 
 ## URL de production
 
-**<https://_à-compléter_.onrender.com>** _(URL Render, renseignée après le premier déploiement)_
+**<https://final-project-ml-in-prod-sms-spam.onrender.com>**
 
 - `/` : page web pour tester un SMS (zone de texte + exemples cliquables)
 - `/model-info` : modèle servi (`model_name`, `alias`, `version`, `run_id`, `data_version`, `loaded_at`)
