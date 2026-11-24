@@ -13,7 +13,10 @@
    pipeline fails.
 5. Rejected: the champion stays, the candidate gets status=rejected + reason.
 6. Always: a parent MLflow run ``ct-decision`` logs data version, DVC hash, Git SHA,
-   scores, thresholds, decision, reason and champion versions before/after.
+   scores, thresholds, decision, reason and champion versions before/after. When the
+   champion has a training profile, ``drift.json`` compares the release with it (same
+   PSI and threshold as the API ``feature_drift`` gauge). Drift is logged for
+   investigation only: it never triggers retraining by itself.
 
 Usage:
   python -m ml.ct_pipeline --data-version v2 [--model-name sms-spam] [--force-train]
@@ -35,11 +38,13 @@ from pathlib import Path
 from typing import Protocol
 
 import mlflow
+import mlflow.artifacts
 import mlflow.sklearn
 from mlflow import MlflowClient
 
+from app.drift import PROFILE_ARTIFACT, drift_report
 from ml.data_utils import RELEASES_DIR, read_csv, sha256_file
-from ml.evaluate import evaluate
+from ml.evaluate import evaluate, spam_probability
 from ml.lineage import dvc_md5, git_sha
 from ml.promotion import DEFAULT_CONFIG_PATH, decide, load_config, should_retrain
 from ml.registry_utils import (
@@ -132,6 +137,8 @@ class CTResult:
     retrain_reasons: list[str] = field(default_factory=list)
     deployed: bool = False
     run_id: str | None = None
+    drift_status: str | None = None  # ok | drift | no_profile (None: no champion)
+    drift_max_psi: float | None = None
 
 
 def dvc_pull(dvc_file: Path) -> None:
@@ -173,6 +180,7 @@ def run_ct(
     cfg = load_config(promotion_config)
     client = client or get_client()
     holdout = read_csv(release_dir / "holdout.csv")
+    train_texts = read_csv(release_dir / "train.csv")["text"].tolist()
     result = CTResult(decision="", reason="", data_version=data_version, model_name=model_name)
 
     mlflow.set_experiment(CT_EXPERIMENT)
@@ -199,7 +207,7 @@ def run_ct(
         )
         try:
             _decide_and_apply(
-                result, cfg, client, holdout, force_train, deploy, deployer,
+                result, cfg, client, holdout, train_texts, force_train, deploy, deployer,
                 data_root, params_baseline, params_candidate,
             )  # fmt: skip
         except Exception as exc:
@@ -218,6 +226,7 @@ def _decide_and_apply(
     cfg,
     client: MlflowClient,
     holdout,
+    train_texts: list[str],
     force_train: bool,
     deploy: bool,
     deployer: Deployer | None,
@@ -236,6 +245,7 @@ def _decide_and_apply(
         model = mlflow.sklearn.load_model(f"models:/{name}/{result.champion_before}")
         metrics, _ = evaluate(model, holdout)
         result.champion_score = metrics[cfg.metric]
+        _log_drift(result, champion, model, train_texts, holdout)
     result.champion_after = result.champion_before
 
     retrain = should_retrain(result.data_version, champion_data_version, result.champion_score, cfg)
@@ -293,6 +303,25 @@ def _decide_and_apply(
     )
 
 
+def _log_drift(result: CTResult, champion, model, train_texts: list[str], holdout) -> None:
+    """Compare the release with the champion's training profile (drift.json)."""
+    try:
+        profile = mlflow.artifacts.load_dict(f"runs:/{champion.run_id}/{PROFILE_ARTIFACT}")
+    except Exception as exc:  # champion trained before profiles existed, or no artifact
+        logger.warning("no training profile for champion v%s: %s", champion.version, exc)
+        result.drift_status = "no_profile"
+        return
+    report = drift_report(profile, train_texts, spam_probability(model, holdout["text"]))
+    report["champion_version"] = str(champion.version)
+    report["data_version"] = result.data_version
+    mlflow.log_dict(report, "drift.json")
+    mlflow.log_metric("drift_max_psi", report["max_psi"])
+    result.drift_max_psi = report["max_psi"]
+    result.drift_status = "drift" if report["drifted"] else "ok"
+    if report["drifted"]:
+        logger.warning("input drift vs champion profile: %s (investigate)", report["drifted"])
+
+
 def _log_decision(result: CTResult, metric: str) -> None:
     mlflow.set_tags(
         {
@@ -303,6 +332,7 @@ def _log_decision(result: CTResult, metric: str) -> None:
             "champion_version_after": result.champion_after or "none",
             "candidate_version": result.candidate_version or "none",
             "deployed": str(result.deployed).lower(),
+            "drift_status": result.drift_status or "none",
         }
     )
     if result.champion_score is not None:
@@ -329,6 +359,7 @@ def write_summary(result: CTResult, path: str | None) -> None:
         ("Candidate score", fmt(result.candidate_score)),
         ("Champion after", fmt(result.champion_after)),
         ("Deployed", "yes" if result.deployed else "no"),
+        ("Drift (max PSI)", f"{fmt(result.drift_max_psi)} ({result.drift_status or 'none'})"),
         ("MLflow run", fmt(result.run_id)),
     ]
     with open(path, "a", encoding="utf-8") as fh:
