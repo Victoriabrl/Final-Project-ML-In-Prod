@@ -90,11 +90,11 @@ v2 simule l'arrivée de nouveaux messages étiquetés : le jeu d'entraînement p
 
 | Version | Train (lignes / spams) | Held-out (lignes / spams) | SHA-256 held-out | Tag Git | Commit | Hash DVC (md5 du `.dvc`) |
 |---|---|---|---|---|---|---|
-| raw | 5 574 messages bruts | — | — | — | _à compléter après merge_ | `6a7944dd155067d167bf352e1841a3f2.dir` |
+| raw | 5 574 messages bruts | — | — | — | `3e8e92c` | `6a7944dd155067d167bf352e1841a3f2.dir` |
 | v1 | 800 / 93 | 1 032 / 128 | `ab9f9cb9…a67e9088d` | `data-v1` | `4c44f41` | `807e5f8cf19f3c946f158ea14b13fe2e.dir` |
-| v2 | 4 128 / 514 | 1 032 / 128 | `ab9f9cb9…a67e9088d` | `data-v2` | _à compléter après merge_ | `b49577e177702ae47171d101b66cb0dc.dir` |
+| v2 | 4 128 / 514 | 1 032 / 128 | `ab9f9cb9…a67e9088d` | `data-v2` | `1e6c9e8` | `b49577e177702ae47171d101b66cb0dc.dir` |
 
-La release v2 a été générée le 2026-11-23 (`python -m ml.make_splits --release v2`), validée par le contrat de données, puis publiée par la PR `feature/data-v2` (commit « data: publish release v2 », tag `data-v2`). Contrôles : le held-out de v2 est identique à celui de v1 (même SHA-256), tout le train de v1 est inclus dans v2 (3 328 messages nouveaux) et aucun texte du train v2 n'apparaît dans le held-out.
+La release v2 a été générée le 2026-11-23 (`python -m ml.make_splits --release v2`), validée par le contrat de données, puis publiée par la PR #21 (`feature/data-v2`) (commit « data: publish release v2 », tag `data-v2`). Contrôles : le held-out de v2 est identique à celui de v1 (même SHA-256), tout le train de v1 est inclus dans v2 (3 328 messages nouveaux) et aucun texte du train v2 n'apparaît dans le held-out.
 
 Le tag `data-v1` pointe sur le commit `4c44f41` (« data: publish release v1 »), intégré
 à `dev` par la PR #2. Les données v1 et brutes ont été envoyées le 2026-11-22 sur le remote
