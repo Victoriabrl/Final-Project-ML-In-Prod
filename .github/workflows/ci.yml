@@ -31,6 +31,15 @@ jobs:
         run: ruff check --output-format=github .
       - name: ruff format --check
         run: ruff format --check .
+      # Monitoring stack files: Prometheus syntax (same image version as docker-compose.yml)
+      # and docker compose interpolation / schema.
+      - name: Monitoring config (promtool + docker compose)
+        run: |
+          for f in prometheus.yml prometheus.prod.yml; do
+            docker run --rm -v "$PWD/monitoring:/cfg:ro" --entrypoint promtool \
+              prom/prometheus:v3.5.0 check config "/cfg/$f"
+          done
+          docker compose config --quiet
 
   tests:
     runs-on: ubuntu-latest
@@ -110,6 +119,17 @@ jobs:
         run: |
           python scripts/smoke_test.py --url http://localhost:8080 \
             --expected-version 1 --expected-git-sha "${{ github.sha }}" --timeout 180
+
+      # Every line printed by the container is JSON, and requests carry a request_id.
+      - name: JSON logs with request_id
+        run: |
+          docker logs app > app.log 2>&1
+          total=$(grep -c . app.log || true)
+          json=$(jq -R -c 'fromjson? | select(type == "object")' app.log | wc -l)
+          with_id=$(jq -R -c 'fromjson? | select(.request_id != null)' app.log | wc -l)
+          echo "log lines: $total, JSON: $json, with request_id: $with_id" | tee -a "$GITHUB_STEP_SUMMARY"
+          jq -R -c 'fromjson? | select(.event == "prediction_made")' app.log | head -n 1
+          [ "$total" -gt 0 ] && [ "$json" -eq "$total" ] && [ "$with_id" -gt 0 ]
 
       - name: Logs on failure
         if: failure()

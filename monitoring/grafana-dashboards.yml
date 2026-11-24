@@ -1,0 +1,11 @@
+# Loads monitoring/dashboard.json (mounted in /var/lib/grafana/dashboards) at startup.
+apiVersion: 1
+
+providers:
+  - name: sms-spam
+    folder: SMS spam
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
