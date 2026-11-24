@@ -25,8 +25,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
+from app.drift import PROFILE_ARTIFACT, build_profile
 from ml.data_utils import RELEASES_DIR, read_csv, sha256_file
-from ml.evaluate import evaluate, save_reports
+from ml.evaluate import evaluate, save_reports, spam_probability
 from ml.lineage import dvc_md5, git_dirty, git_sha
 from ml.registry_utils import STATUS_CANDIDATE, get_client, set_version_tags
 from ml.validate_data import validate_release
@@ -127,6 +128,13 @@ def train(
                 mlflow.log_artifact(str(path), artifact_path="evaluation")
         mlflow.log_artifact(str(release_dir / "manifest.json"), artifact_path="data")
         mlflow.log_artifact(str(params_path), artifact_path="config")
+        # Reference distributions for drift monitoring (CT drift.json, API feature_drift).
+        profile = build_profile(
+            train_df["text"],
+            spam_probability(model, holdout_df["text"]),
+            source={"data_version": data_version, "git_sha": sha},
+        )
+        mlflow.log_dict(profile, PROFILE_ARTIFACT)
 
         example = holdout_df[["text"]].head(3)
         info = mlflow.sklearn.log_model(

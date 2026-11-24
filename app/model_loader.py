@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pandas as pd
 
+from app.drift import PROFILE_ARTIFACT
+from app.drift_monitor import DriftMonitor
+from app.logging_config import get_logger
 from app.settings import Settings
 
-logger = logging.getLogger(__name__)
+log = get_logger("app.model")
 
 SPAM = "spam"
 # Internal self-check run before declaring the service ready.
@@ -32,6 +34,8 @@ class LoadedModel:
     run_id: str | None
     data_version: str | None
     loaded_at: str
+    # None when the champion's run has no training profile: drift is then not computed.
+    drift: DriftMonitor | None = None
 
 
 def _spam_probabilities(model, texts: list[str]) -> list[float]:
@@ -77,6 +81,7 @@ class ModelLoader:
         if not all(0.0 <= p <= 1.0 for p in probs):
             raise RuntimeError(f"self-check failed: probabilities {probs}")
 
+        drift = self._drift_monitor(mv.run_id, str(mv.version))
         loaded = LoadedModel(
             model=model,
             model_name=s.model_name,
@@ -85,12 +90,47 @@ class ModelLoader:
             run_id=mv.run_id,
             data_version=mv.tags.get("data_version"),
             loaded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            drift=drift,
         )
         with self._lock:
             self._current = loaded
             self.last_error = None
-        logger.info("Loaded %s version %s (alias %s)", s.model_name, mv.version, s.model_alias)
+        log.info(
+            "model_loaded",
+            model_name=s.model_name,
+            model_version=loaded.version,
+            alias=s.model_alias,
+            run_id=loaded.run_id,
+            data_version=loaded.data_version,
+        )
         return loaded
+
+    def _drift_monitor(self, run_id: str | None, version: str) -> DriftMonitor | None:
+        """Download the training profile of the champion's run (artifact of ml/train.py)."""
+        import mlflow.artifacts
+
+        if not run_id:
+            return None
+        try:
+            profile = mlflow.artifacts.load_dict(f"runs:/{run_id}/{PROFILE_ARTIFACT}")
+        except Exception as exc:  # no profile on this run, or artifact store unreachable
+            log.warning(
+                "drift_profile_missing",
+                model_version=version,
+                run_id=run_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return None
+        s = self.settings
+        log.info(
+            "drift_profile_loaded",
+            model_version=version,
+            run_id=run_id,
+            data_version=profile.get("source", {}).get("data_version"),
+            window_size=s.drift_window_size,
+            recompute_every=s.drift_recompute_every,
+        )
+        return DriftMonitor(profile, version, s.drift_window_size, s.drift_recompute_every)
 
     def try_load(self) -> bool:
         try:
@@ -98,14 +138,16 @@ class ModelLoader:
             return True
         except Exception as exc:  # registry down, alias missing, bad model...
             self.last_error = f"{type(exc).__name__}: {exc}"
-            logger.error("Model loading failed: %s", self.last_error)
+            log.error(
+                "model_load_failed", model_name=self.settings.model_name, error=self.last_error
+            )
             return False
 
     async def load_with_retry(self) -> None:
         """Background task: retry with exponential backoff until a model is loaded."""
         delay = self.settings.retry_initial_delay
         while not await asyncio.to_thread(self.try_load):
-            logger.info("Retrying model loading in %.0fs", delay)
+            log.info("model_load_retry", delay_s=delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.settings.retry_max_delay)
 

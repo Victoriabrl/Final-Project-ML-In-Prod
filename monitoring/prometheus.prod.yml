@@ -1,0 +1,17 @@
+# Optional (demo): scrape the production service on Render instead of the local API.
+#   PROMETHEUS_CONFIG=prometheus.prod.yml docker compose up -d
+# Same job name ("api"), so the dashboard and the alerts work unchanged. Every scrape is
+# a request: it keeps the free instance awake while the stack runs, so stop it after.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: api
+    scheme: https
+    metrics_path: /metrics
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["final-project-ml-in-prod-sms-spam.onrender.com"]
+        labels:
+          env: production

@@ -96,11 +96,19 @@
 
   function show(cls, html) { result.className = "result " + cls; result.innerHTML = html; }
 
+  // One id per prediction, sent to the API and shown, to find the request in the logs.
+  function newRequestId() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return Date.now().toString(16) + Math.random().toString(16).slice(2);
+  }
+
   async function predict() {
     go.disabled = true;
+    const requestId = newRequestId();
     try {
       const r = await fetch("/predict", {
-        method: "POST", headers: {"Content-Type": "application/json"},
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-Request-ID": requestId},
         body: JSON.stringify({text: text.value})
       });
       const data = await r.json();
@@ -110,7 +118,8 @@
       show(data.label,
         `<div class="label">${data.label}</div>` +
         `<div>Spam probability: ${pct}%</div>` +
-        `<div class="count">Model ${data.model_name} · version ${data.model_version}</div>`);
+        `<div class="count">Model ${data.model_name} · version ${data.model_version}</div>` +
+        `<div class="count">Request ID: ${r.headers.get("X-Request-ID") ?? requestId}</div>`);
     } catch (e) {
       show("error", "Network error: " + e.message);
     } finally {

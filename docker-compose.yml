@@ -1,0 +1,72 @@
+# Local monitoring stack: the API (same Dockerfile as production), Prometheus (scrapes
+# /metrics every 5 s) and Grafana (datasource + dashboard provisioned at startup).
+#   docker compose up -d --build        then open http://localhost:3000 (Grafana)
+# Values come from .env (never committed): MLflow credentials for the API, Grafana admin
+# password and SMTP settings. Nothing secret is written in this file.
+# To scrape the production URL instead of the local API (demo only: it keeps the free
+# Render instance awake):  PROMETHEUS_CONFIG=prometheus.prod.yml docker compose up -d
+name: sms-spam-monitoring
+
+services:
+  api:
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-local}
+    image: sms-spam:local
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
+      MLFLOW_TRACKING_USERNAME: ${MLFLOW_TRACKING_USERNAME:-}
+      MLFLOW_TRACKING_PASSWORD: ${MLFLOW_TRACKING_PASSWORD:-}
+      MODEL_NAME: ${MODEL_NAME:-sms-spam}
+      MODEL_ALIAS: ${MODEL_ALIAS:-champion}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DRIFT_WINDOW_SIZE: ${DRIFT_WINDOW_SIZE:-500}
+      DRIFT_RECOMPUTE_EVERY: ${DRIFT_RECOMPUTE_EVERY:-100}
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/${PROMETHEUS_CONFIG:-prometheus.yml}:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/dashboard.json
+      # Email for the alerts (step 7). Gmail app password or Mailtrap, set in .env only.
+      GF_SMTP_ENABLED: ${GF_SMTP_ENABLED:-false}
+      GF_SMTP_HOST: ${GF_SMTP_HOST:-}
+      GF_SMTP_USER: ${GF_SMTP_USER:-}
+      GF_SMTP_PASSWORD: ${GF_SMTP_PASSWORD:-}
+      GF_SMTP_FROM_ADDRESS: ${GF_SMTP_FROM_ADDRESS:-alerts@sms-spam.local}
+      GF_SMTP_FROM_NAME: SMS spam monitoring
+      # Recipients of the alerts (monitoring/alerting/contact-points.yml).
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-team@example.com}
+    volumes:
+      - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./monitoring/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./monitoring/dashboard.json:/var/lib/grafana/dashboards/dashboard.json:ro
+      - ./monitoring/alerting:/etc/grafana/provisioning/alerting:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  grafana-data:

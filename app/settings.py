@@ -18,6 +18,9 @@ class Settings:
     retry_max_delay: float
     # Baked into the image at build time (Dockerfile ARG GIT_SHA); None outside an image.
     git_sha: str | None = None
+    # Live drift: window of recent predictions, recomputed every N predictions.
+    drift_window_size: int = 500
+    drift_recompute_every: int = 100
 
 
 def _bool(value: str) -> bool:
@@ -34,4 +37,6 @@ def get_settings() -> Settings:
         retry_initial_delay=float(os.environ.get("MODEL_LOAD_RETRY_INITIAL_DELAY", "2")),
         retry_max_delay=float(os.environ.get("MODEL_LOAD_RETRY_MAX_DELAY", "60")),
         git_sha=os.environ.get("GIT_SHA") or None,
+        drift_window_size=int(os.environ.get("DRIFT_WINDOW_SIZE", "500")),
+        drift_recompute_every=int(os.environ.get("DRIFT_RECOMPUTE_EVERY", "100")),
     )
