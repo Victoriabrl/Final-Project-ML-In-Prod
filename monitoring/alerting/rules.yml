@@ -1,0 +1,107 @@
+# The 3 alerts of the SMS spam API, provisioned at startup (versioned with the code).
+# Same PromQL as the dashboard panels. Evaluated every 10 s.
+#   - API down        : up{job="api"} == 0 for 1 min
+#   - 5xx error rate  : > 5 % of /predict requests answered 5xx over 2 min
+#   - Input drift     : max feature_drift >= 0.20 for 2 min (investigate, do not retrain)
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: sms-spam-api
+    folder: SMS spam
+    interval: 10s
+    rules:
+      - uid: sms-spam-api-down
+        title: API down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 60, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: up{job="api"}
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        # No series at all = Prometheus cannot see the API either: alert.
+        noDataState: Alerting
+        execErrState: Error
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: L'API de détection de spam ne répond plus à Prometheus depuis 1 min.
+          description: up{job="api"} vaut 0. Vérifier le conteneur (docker compose ps / logs api) ou le service Render.
+
+      - uid: sms-spam-api-5xx
+        title: 5xx error rate on /predict
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 120, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                100 * sum(rate(http_requests_total{job="api",path="/predict",status=~"5.."}[2m]))
+                / sum(rate(http_requests_total{job="api",path="/predict"}[2m]))
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [5]}
+        # No 5xx series (or no traffic) = nothing wrong.
+        noDataState: OK
+        execErrState: Error
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: Plus de 5 % des prédictions échouent (5xx) sur les 2 dernières minutes.
+          description: Souvent un modèle non chargé (503) - voir /ready et les logs level=error.
+
+      - uid: sms-spam-api-drift
+        title: Input drift
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 120, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: max(feature_drift{job="api"})
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.1999]}
+        # No drift value yet (fewer than 500 predictions, or no profile) = OK.
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: Drift des entrées (PSI >= 0,20 depuis 2 min) - enquêter, ne pas réentraîner automatiquement.
+          description: Regarder quelles features bougent dans le panneau drift et comparer au drift.json du CT avant de décider d'une nouvelle release de données.

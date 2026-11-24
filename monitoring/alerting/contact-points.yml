@@ -1,0 +1,15 @@
+# Email contact point for the Grafana alerts, provisioned at startup.
+# Recipients and SMTP server come from the environment (.env), never from this file:
+#   ALERT_EMAIL_TO (comma-separated), GF_SMTP_* (see docker-compose.yml).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: team-email
+    receivers:
+      - uid: team-email
+        type: email
+        settings:
+          addresses: ${ALERT_EMAIL_TO}
+          singleEmail: true
+        disableResolveMessage: false

@@ -290,3 +290,84 @@ production expose les mêmes logs (onglet *Logs* de Render) et le même `/metric
    version » montre de nouvelles séries `(v1)` ; logs : `model_loaded` avec `model_version: "1"`
    puis des `prediction_made` en version 1 (`jq` : prédictions par `model_version`).
 5. Retour au champion : rollback vers 5, puis `docker compose restart api` → `v5` à nouveau.
+
+## Alertes email (Grafana)
+
+Provisionnées au démarrage de Grafana depuis `monitoring/alerting/` (versionnées avec le
+code, rien à cliquer) :
+
+| Fichier | Contenu |
+|---|---|
+| `rules.yml` | les 3 règles (dossier *SMS spam*, groupe `sms-spam-api`, évaluées toutes les 10 s) |
+| `contact-points.yml` | point de contact `team-email` (type email, destinataires = `ALERT_EMAIL_TO`), messages « resolved » activés |
+| `notification-policies.yml` | politique par défaut : toutes les alertes vers `team-email` |
+
+| Alerte | Condition (PromQL) | Pendant | Sans données | Résumé |
+|---|---|---|---|---|
+| **API down** | `up{job="api"}` < 1 (= 0) | 1 min | Alerting (Prometheus ne voit plus l'API) | l'API ne répond plus à Prometheus |
+| **5xx error rate on /predict** | `100 * sum(rate(http_requests_total{path="/predict",status=~"5.."}[2m])) / sum(rate(http_requests_total{path="/predict"}[2m]))` > 5 | 30 s | OK (pas de trafic ou pas de 5xx) | plus de 5 % des prédictions échouent sur 2 min |
+| **Input drift** | `max(feature_drift{job="api"})` ≥ 0,20 | 2 min | OK (moins de 500 prédictions, ou pas de profil) | drift des entrées : **enquêter, ne pas réentraîner automatiquement** |
+
+Le seuil de drift est celui de `app/drift.py` (`DRIFT_THRESHOLD`) et du `drift.json` du CT.
+
+### Configurer l'envoi des emails (Mailtrap)
+
+Mailtrap (offre gratuite) fournit une boîte de test : les emails sont capturés dans
+l'interface web de Mailtrap, rien n'est envoyé à de vraies adresses.
+
+1. Créer un compte sur <https://mailtrap.io> → **Email Testing** → **Inboxes** → *My Inbox*
+   → onglet **SMTP Settings** : noter *Host*, *Port*, *Username*, *Password*.
+2. Dans le `.env` (jamais commité) :
+
+   ```bash
+   GF_SMTP_ENABLED=true
+   GF_SMTP_HOST=sandbox.smtp.mailtrap.io:2525
+   GF_SMTP_USER=<username Mailtrap>
+   GF_SMTP_PASSWORD=<password Mailtrap>
+   GF_SMTP_FROM_ADDRESS=alerts@sms-spam.local
+   ALERT_EMAIL_TO=equipe@example.com
+   ```
+
+3. `docker compose up -d grafana` (relit l'environnement), puis dans Grafana : *Alerting* →
+   *Contact points* → `team-email` → **Test** : un email doit arriver dans la boîte Mailtrap.
+
+Avec Gmail à la place : `GF_SMTP_HOST=smtp.gmail.com:587`, `GF_SMTP_USER=<adresse>`,
+`GF_SMTP_PASSWORD=<mot de passe d'application>` (compte avec validation en 2 étapes).
+
+### Déclencher chaque alerte (« firing » puis « resolved »)
+
+Stack lancée (`docker compose up -d --build`), lots de rejeu construits (`.exercise-data/`).
+L'état des règles se suit dans Grafana → *Alerting* → *Alert rules* (Normal → Pending →
+Firing → Normal) et les emails dans Mailtrap.
+
+1. **API down**
+   - déclencher : `docker compose stop api` → *Firing* après ~1 min (+ délai d'évaluation) ;
+   - résoudre : `docker compose start api` → email « resolved ».
+2. **5xx error rate** — les requêtes invalides de `--broken` donnent des **422**, pas des 5xx ;
+   on provoque de vrais 503 en démarrant l'API sur un alias qui n'existe pas (aucun modèle ne
+   peut être chargé, `/predict` répond 503) :
+   - déclencher : `MODEL_ALIAS=does-not-exist docker compose up -d api` puis
+     `python scripts/replay.py --file .exercise-data/normal.csv --rate 5 --limit 400` ;
+   - résoudre : `docker compose up -d api` (alias normal), un peu de trafic normal ; la fenêtre
+     de 2 min se vide des 503 → « resolved ».
+3. **Input drift**
+   - déclencher : `docker compose restart api` (fenêtre vide), puis
+     `python scripts/replay.py --file .exercise-data/campaign.csv --rate 30 --limit 600`
+     → PSI ≥ 0,20 → *Firing* au bout de 2 min ;
+   - résoudre : `python scripts/replay.py --file .exercise-data/normal.csv --rate 30 --limit 600 --shuffle`
+     → la fenêtre redevient normale → « resolved ».
+
+Preuves à garder pour le rendu : capture de *Alert rules* en Firing, capture de chaque email
+« firing » et « resolved » dans Mailtrap.
+
+Vérification réelle (stack locale, 2026-11-24, sans SMTP) :
+
+| Alerte | Déclenchement | Firing après | Retour à Normal |
+|---|---|---|---|
+| API down | `docker compose stop api` | 77 s | dès le redémarrage de l'API |
+| 5xx error rate on /predict | alias inexistant + 400 requêtes | 47 s | 47 s après le retour du modèle |
+| Input drift | 600 SMS de `campaign.csv` | 138 s | 16 s après 600 SMS normaux |
+
+Chaque alerte a bien été routée vers `team-email` (log Grafana `Notify for alerts` ; sans
+SMTP configuré, l'envoi échoue avec « SMTP not configured »). Les emails « firing » et
+« resolved » se vérifient une fois les identifiants Mailtrap mis dans le `.env`.
