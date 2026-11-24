@@ -179,3 +179,42 @@ max by (model_version) (model_info)                                             
 **Smoke test** : `scripts/smoke_test.py` (CI `docker-smoke`, staging, déploiement, CT,
 rollback) vérifie aussi que `/metrics` répond, que `model_info` porte la **version attendue**
 et que `predictions_total` a compté les prédictions du test pour cette version.
+
+## Drift des entrées en production (`feature_drift`)
+
+Même mesure que le CT (`app/drift.py` : 5 features de texte + score, PSI, seuil **0,20**),
+appliquée au trafic réel par `app/drift_monitor.py` :
+
+1. **Au chargement du modèle**, l'app télécharge `monitoring/training-profile.json` depuis le
+   run d'entraînement du champion (le `run_id` de la version servie ; ajouté a posteriori à la
+   v5 par `ml.backfill_profile`). Log `drift_profile_loaded`, ou `drift_profile_missing`
+   (warning) si le run n'a pas de profil : l'app reste prête, le drift n'est simplement pas
+   calculé (c'est un signal, pas une dépendance).
+2. **À chaque prédiction**, les 5 features du message (pas le texte) entrent dans une
+   `deque(maxlen=500)` : mémoire bornée.
+3. **Toutes les 100 prédictions**, une fois la fenêtre pleine, le PSI de chaque feature est
+   recalculé avec les bins du profil → jauge `feature_drift{feature}` et log `drift_computed`
+   (niveau `warning` si une feature dépasse 0,20). Attendre 500 messages évite les fausses
+   alertes : sur 100 messages, le hasard suffit à dépasser 0,20.
+
+Réglages (variables d'environnement) : `DRIFT_WINDOW_SIZE` (500), `DRIFT_RECOMPUTE_EVERY` (100).
+
+Exemple réel (API locale, champion v5, profil v2) :
+
+| Après | PSI max | Features ≥ 0,20 |
+|---|---|---|
+| 600 SMS de `normal.csv` | 0,016 | aucune |
+| + 100 SMS de `campaign.csv` | 0,23 | `spam_probability` |
+| + 200 | 0,68 | les 5 |
+| + 600 (fenêtre entièrement « campagne ») | 6,9 | les 5 |
+
+La montée est progressive parce que la fenêtre glissante se remplit petit à petit de messages
+de campagne ; elle redescend de la même façon quand le trafic redevient normal.
+
+**Un drift déclenche une enquête, pas un réentraînement** : regarder quelles features bougent
+(campagne de spam ? nouveau type de messages ? bug du client ?), comparer avec le `drift.json`
+du CT (mêmes valeurs, même seuil), puis décider de publier une nouvelle release de données et
+de lancer le CT à la main.
+
+Le compteur repart à zéro à chaque démarrage (nouveau déploiement, CT, rollback, réveil de
+l'instance gratuite) : la jauge n'apparaît qu'après 500 nouvelles prédictions.

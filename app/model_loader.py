@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
+from app.drift import PROFILE_ARTIFACT
+from app.drift_monitor import DriftMonitor
 from app.logging_config import get_logger
 from app.settings import Settings
 
@@ -32,6 +34,8 @@ class LoadedModel:
     run_id: str | None
     data_version: str | None
     loaded_at: str
+    # None when the champion's run has no training profile: drift is then not computed.
+    drift: DriftMonitor | None = None
 
 
 def _spam_probabilities(model, texts: list[str]) -> list[float]:
@@ -77,6 +81,7 @@ class ModelLoader:
         if not all(0.0 <= p <= 1.0 for p in probs):
             raise RuntimeError(f"self-check failed: probabilities {probs}")
 
+        drift = self._drift_monitor(mv.run_id, str(mv.version))
         loaded = LoadedModel(
             model=model,
             model_name=s.model_name,
@@ -85,6 +90,7 @@ class ModelLoader:
             run_id=mv.run_id,
             data_version=mv.tags.get("data_version"),
             loaded_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            drift=drift,
         )
         with self._lock:
             self._current = loaded
@@ -98,6 +104,33 @@ class ModelLoader:
             data_version=loaded.data_version,
         )
         return loaded
+
+    def _drift_monitor(self, run_id: str | None, version: str) -> DriftMonitor | None:
+        """Download the training profile of the champion's run (artifact of ml/train.py)."""
+        import mlflow.artifacts
+
+        if not run_id:
+            return None
+        try:
+            profile = mlflow.artifacts.load_dict(f"runs:/{run_id}/{PROFILE_ARTIFACT}")
+        except Exception as exc:  # no profile on this run, or artifact store unreachable
+            log.warning(
+                "drift_profile_missing",
+                model_version=version,
+                run_id=run_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return None
+        s = self.settings
+        log.info(
+            "drift_profile_loaded",
+            model_version=version,
+            run_id=run_id,
+            data_version=profile.get("source", {}).get("data_version"),
+            window_size=s.drift_window_size,
+            recompute_every=s.drift_recompute_every,
+        )
+        return DriftMonitor(profile, version, s.drift_window_size, s.drift_recompute_every)
 
     def try_load(self) -> bool:
         try:

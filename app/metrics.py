@@ -8,8 +8,8 @@ an input value):
 - ``http_request_duration_seconds{path}``           histogram, request latency
 - ``predictions_total{prediction, model_version}``  counter, spam / ham per version
 - ``model_info{model_version}``                     gauge = 1, only once a model is loaded
-- ``feature_drift{feature}``                        gauge, PSI per feature (set by the
-                                                    drift monitor, step 5)
+- ``feature_drift{feature}``                        gauge, PSI per feature of the last
+                                                    500 predictions (app/drift_monitor.py)
 
 Each app gets its own registry (tests create several apps in one process). Counters
 start at 0 when the process starts: dashboards use rate() / increase(), never raw values.
@@ -69,6 +69,12 @@ class Metrics:
         self.model_info.clear()
         if model_version is not None:
             self.model_info.labels(model_version=model_version).set(1)
+
+    def set_feature_drift(self, values: dict[str, float] | None) -> None:
+        """One series per feature with the latest PSI, or none before the first window."""
+        self.feature_drift.clear()
+        for feature, psi in (values or {}).items():
+            self.feature_drift.labels(feature=feature).set(psi)
 
     def generate_latest(self) -> bytes:
         return _generate_latest(self.registry)

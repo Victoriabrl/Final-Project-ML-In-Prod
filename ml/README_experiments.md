@@ -219,6 +219,18 @@ Contrôle sur les vraies données (profil = train v1, scores simulés par le lab
 Sur 100 messages, le hasard suffit à franchir le seuil : d'où la fenêtre de **500**
 prédictions côté API.
 
+**Même seuil côté API et côté CT.** L'API (`app/drift_monitor.py`) compare les 500 dernières
+prédictions au profil du champion chargé, avec la même fonction (`feature_psi`), les mêmes bins
+(ceux du profil) et le même seuil (`DRIFT_THRESHOLD = 0,20`, aussi écrit dans le profil) que le
+`drift.json` du CT : une valeur de `feature_drift` et une valeur de `drift.json` se lisent de
+la même façon. L'alerte Grafana « drift » utilise ce seuil (≥ 0,20 pendant 2 min) et dit
+d'enquêter ; le réentraînement reste décidé par la règle de `promotion.yaml` (voir
+`docs/MONITORING.md`).
+
+Une valeur qui concentre au moins un dixième des messages de référence (par exemple 0 chiffre,
+ou 0 majuscule) a son propre bin, pour qu'un passage de « jamais » à « souvent » se voie
+(sinon tous les déciles tombent sur la même valeur et le PSI reste à 0).
+
 ## Choix du modèle de production
 
 Le modèle servi en production est **`sms-spam` version 5** (alias `champion`) : le candidat

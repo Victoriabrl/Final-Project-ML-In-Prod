@@ -54,14 +54,24 @@ def text_feature_columns(texts: Iterable[str]) -> dict[str, np.ndarray]:
 def _bin_edges(values: np.ndarray) -> list[float]:
     """Inner cut points: at the deciles, or between the distinct values when there are
     few of them (a binary feature that is 0 for 90% of messages would otherwise put
-    every value in one bin and never drift)."""
+    every value in one bin and never drift).
+
+    A value holding at least one decile of the reference (a point mass, e.g. 0 capitals
+    or 0 digits) also gets a cut just above it, so "exactly that value" and "more than
+    it" stay in separate bins; with a single distinct value, that cut is the only one.
+    """
     if values.size == 0:
         return []
     distinct = np.unique(values)
+    if distinct.size == 1:
+        return [float(np.nextafter(distinct[0], np.inf))]
     if distinct.size <= N_BINS:
         return [float(x) for x in (distinct[:-1] + distinct[1:]) / 2]
-    qs = np.quantile(values, np.linspace(0, 1, N_BINS + 1)[1:-1])
-    return [float(x) for x in np.unique(qs)]
+    edges = set(np.unique(np.quantile(values, np.linspace(0, 1, N_BINS + 1)[1:-1])).tolist())
+    for value in list(edges):
+        if np.mean(values == value) >= 1 / N_BINS:
+            edges.add(float(np.nextafter(value, np.inf)))
+    return sorted(float(x) for x in edges)
 
 
 def _proportions(values: np.ndarray, edges: Sequence[float]) -> list[float]:
