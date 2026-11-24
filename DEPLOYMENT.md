@@ -48,6 +48,8 @@ secrète dans Git, dans l'image ou dans les logs.
 | `MLFLOW_TRACKING_USERNAME` | idem | utilisateur DagsHub |
 | `MLFLOW_TRACKING_PASSWORD` | idem (secret) | token DagsHub (lecture suffit pour Render) |
 | `MODEL_NAME` / `MODEL_ALIAS` | env (défauts `sms-spam` / `champion`) | modèle et alias résolus au démarrage |
+| `LOG_LEVEL` | env (défaut `INFO`) | niveau des logs JSON (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `MLFLOW_CONFIGURE_LOGGING`, `MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR` | image (`false`) | MLflow n'installe pas son propre format de log ni de barre de progression : toutes les lignes restent du JSON |
 | `PORT` | fourni par Render | port d'écoute (défaut 8000) |
 | `AZURE_STORAGE_CONNECTION_STRING` | `.dvc/config.local`, secret GitHub | accès au remote DVC |
 | `RENDER_DEPLOY_HOOK_URL` | secret GitHub | URL secrète du deploy hook |
@@ -69,7 +71,7 @@ secrète dans Git, dans l'image ou dans les logs.
 | VIII. Concurrence | Montée en charge horizontale par instances (même image, sans état). Limitée ici par l'offre gratuite Render : une seule instance, mise en veille après ~15 min d'inactivité. |
 | IX. Jetable | Démarrage rapide (le chargement du modèle se fait en tâche de fond, `/health` répond tout de suite) ; arrêt propre via le lifespan FastAPI (`exec` dans la commande pour que uvicorn reçoive SIGTERM) ; readiness (`/ready`) séparée de la liveness (`/health`). |
 | X. Parité dev/prod | Même Dockerfile et même image en CI, staging et prod ; seuls le registry et la config changent. Le même code de chargement tourne dans les tests (registry SQLite local). |
-| XI. Logs | Logs sur stdout/stderr (`PYTHONUNBUFFERED=1`), collectés par Render et par GitHub Actions ; aucun fichier de log. |
+| XI. Logs | Flux d'événements JSON sur stdout (structlog, `app/logging_config.py`), une ligne par événement : `model_loaded`, `request_completed` (méthode, route, statut, durée), `prediction_made` (version, label, score, latence, taille du texte — jamais le texte). Chaque ligne porte un `request_id` (en-tête `X-Request-ID`, reçu ou généré, renvoyé au client ; `null` hors requête). Les logs d'uvicorn et de MLflow passent par le même format ; le log d'accès d'uvicorn est coupé (`--no-access-log`), remplacé par `request_completed`. Niveau par `LOG_LEVEL`. Aucun fichier : Docker (rotation) et Render (onglet *Logs*) collectent stdout. Les secrets connus sont masqués (`***`) même si une bibliothèque les écrit. |
 | XII. Processus d'admin | Le CT (`python -m ml.ct_pipeline`) et le rollback (`python -m ml.rollback`) sont des tâches ponctuelles, lancées par `workflow_dispatch` ou en local, avec le même code et la même config. |
 
 ## Quelle branche déclenche quoi
