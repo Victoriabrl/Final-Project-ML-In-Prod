@@ -43,3 +43,7 @@ Thumbs.db
 
 # Course brief: kept locally, never versioned
 docs/BRIEF_CLAUDE_CODE.pdf
+
+# Replay sets for monitoring demos (built from DVC releases, never versioned)
+.exercise-data/
+.exercise-results/

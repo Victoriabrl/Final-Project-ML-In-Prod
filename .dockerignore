@@ -23,3 +23,5 @@ mlartifacts/
 CLAUDE.md
 requirements-train.txt
 requirements-dev.txt
+.exercise-data/
+.exercise-results/

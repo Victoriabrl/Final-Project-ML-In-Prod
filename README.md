@@ -120,6 +120,7 @@ data/       fichiers .dvc uniquement (les données sont sur Azure Blob)
 - [DEPLOYMENT.md](DEPLOYMENT.md) : architecture, 12 facteurs, CD, CT, rollback, comportement en cas d'échec
 - [ml/README_data.md](ml/README_data.md) : source et licence des données, split, versions v1 / v2
 - [ml/README_experiments.md](ml/README_experiments.md) : métrique, règle de promotion, runs MLflow
+- [docs/MONITORING.md](docs/MONITORING.md) : monitoring (rejeu de trafic, logs, métriques, dashboard, alertes)
 
 ## Équipe
 
