@@ -57,3 +57,71 @@ section alertes, étape 7).
 
 Sous Windows, utiliser `127.0.0.1` plutôt que `localhost` (qui essaie d'abord l'IPv6 et
 ajoute ~2 s par requête quand uvicorn n'écoute qu'en IPv4).
+
+## Lire les logs JSON avec `jq`
+
+Le service écrit **une ligne JSON par événement** sur stdout (`app/logging_config.py`).
+
+### Où trouver les logs
+
+| Où tourne l'API | Commande |
+|---|---|
+| uvicorn en local | la sortie du terminal (`... 2>&1 \| tee api.log` pour la garder) |
+| conteneur Docker | `docker logs <conteneur>` |
+| stack `docker compose` (étape 6) | `docker compose logs api --no-log-prefix` |
+| production Render | tableau de bord Render → service → onglet **Logs** (recherche texte : coller un `request_id`, ou `"level":"error"`) |
+
+Installer `jq` : `winget install jqlang.jq` (Windows), `brew install jq` (macOS), `apt install jq`
+(Linux ; déjà présent sur les runners GitHub Actions).
+
+### Champs
+
+| Champ | Présent sur | Contenu |
+|---|---|---|
+| `timestamp`, `level`, `logger`, `event` | toutes les lignes | heure UTC ISO, niveau, module, nom de l'événement |
+| `request_id` | toutes les lignes | id de la requête (en-tête `X-Request-ID`), `null` hors requête (démarrage) |
+| `model_name`, `model_version`, `alias`, `run_id`, `data_version` | `model_loaded` | version concrète chargée au démarrage |
+| `method`, `path`, `status`, `duration_ms` | `request_completed` | une ligne par requête HTTP ; `path` = route (`/predict`), niveau `error` si statut ≥ 500 |
+| `model_version`, `prediction`, `score`, `latency_ms`, `n_chars`, `n_words` | `prediction_made` | sortie du modèle ; **jamais le texte du SMS** |
+
+### Requêtes utiles
+
+`-R` + `fromjson?` lit chaque ligne comme du texte et ignore celles qui ne sont pas du JSON
+(préfixe oublié, ligne coupée) au lieu d'arrêter `jq`. Remplacer `docker compose logs api
+--no-log-prefix` par la source voulue (`docker logs <conteneur>`, `cat api.log`...).
+
+**Erreurs seules** (5xx, échec de chargement du modèle) :
+
+```bash
+docker compose logs api --no-log-prefix | jq -R -c 'fromjson? | select(.level == "error")'
+```
+
+**Toutes les lignes d'une requête** (id affiché par la page web, renvoyé dans l'en-tête
+`X-Request-ID`, ou envoyé par `scripts/replay.py`) — de `prediction_made` à `request_completed` :
+
+```bash
+docker compose logs api --no-log-prefix | jq -R -c 'fromjson? | select(.request_id == "<id>")'
+```
+
+**Nombre de prédictions par `model_version`** (utile après un rollback : quelle version a servi
+combien de prédictions) :
+
+```bash
+docker compose logs api --no-log-prefix | jq -R -s -c '[split("\n")[] | fromjson? | select(.event == "prediction_made")] | group_by(.model_version) | map({model_version: .[0].model_version, predictions: length})'
+```
+
+Autres requêtes :
+
+```bash
+# prédictions par version et par label (spam / ham)
+jq -R -s -c '[split("\n")[] | fromjson? | select(.event == "prediction_made")] | group_by([.model_version, .prediction]) | map({model_version: .[0].model_version, prediction: .[0].prediction, n: length})'
+# requêtes lentes (> 500 ms)
+jq -R -c 'fromjson? | select(.event == "request_completed" and .duration_ms > 500) | {timestamp, request_id, path, status, duration_ms}'
+# nombre de 5xx par route
+jq -R -s -c '[split("\n")[] | fromjson? | select(.event == "request_completed" and .status >= 500)] | group_by(.path) | map({path: .[0].path, errors: length})'
+# chronologie des modèles chargés (redémarrage, CT, rollback)
+jq -R -c 'fromjson? | select(.event == "model_loaded") | {timestamp, model_version}'
+```
+
+Ces filtres sont exécutés par `tests/test_log_queries.py` sur de vrais logs de l'application
+(en CI, où `jq` est installé), pour que la documentation reste juste.
