@@ -68,6 +68,9 @@ uvicorn app.main:app --reload      # http://localhost:8000
 docker build --build-arg GIT_SHA=$(git rev-parse HEAD) -t sms-spam:local .
 docker run --rm -p 8000:8000 --env-file .env sms-spam:local
 python scripts/smoke_test.py --url http://localhost:8000
+
+# Ou la stack de monitoring : API + Prometheus (:9090) + Grafana (:3000)
+docker compose --env-file .env up -d --build
 ```
 
 Données (DVC, remote Azure Blob) : `dvc remote modify --local azure connection_string "..."`
@@ -90,7 +93,7 @@ feature/<sujet> ──PR──▶ dev ──PR──▶ staging ──PR──�
   approuvées par un autre membre de l'équipe que l'auteur.
 - Promotion : PR `dev → staging`, puis PR `staging → main`, jamais de raccourci.
 - Les branches longues (`dev`, `staging`, `main`) sont protégées : PR obligatoire, 1 approbation,
-  checks CI requis (`lint`, `tests`, `docker-smoke`), branche à jour, pas de force-push.
+  checks CI requis (`lint`, `tests`, `docker-smoke`), ni suppression ni force-push.
 
 ## Workflows
 
@@ -108,12 +111,15 @@ Détails (architecture, 12 facteurs, reproduction d'un déploiement, échecs) :
 ## Structure du dépôt
 
 ```
-app/        API FastAPI (chargement du champion, routes, page HTML)
-ml/         données (DVC), entraînement, évaluation, promotion, CT, rollback
-scripts/    registry de test, smoke test, résolution du champion, deploy hook Render
-tests/      pytest (prédiction, validation, chargement, promotion, données, CT, rollback)
-data/       fichiers .dvc uniquement (les données sont sur Azure Blob)
-.github/    workflows CI / CD / CT / rollback
+app/                API FastAPI (chargement du champion, routes, page HTML, logs JSON, métriques, drift)
+ml/                 données (DVC), entraînement, évaluation, promotion, CT, rollback, lots de rejeu
+scripts/            registry de test, smoke test, résolution du champion, deploy hook Render, rejeu de trafic
+tests/              pytest (prédiction, validation, chargement, promotion, données, CT, rollback, monitoring)
+data/               fichiers .dvc uniquement (les données sont sur Azure Blob)
+monitoring/         configuration Prometheus, dashboard et alertes Grafana
+docs/               documentation du monitoring
+docker-compose.yml  stack locale : API + Prometheus + Grafana
+.github/            workflows CI / CD / CT / rollback
 ```
 
 ## Documentation
@@ -127,9 +133,9 @@ data/       fichiers .dvc uniquement (les données sont sur Azure Blob)
 
 | Membre | Rôle | Branches principales |
 |---|---|---|
-| Lilou | A — Données / ML | `feature/data-pipeline`, `feature/promotion-rule`, `feature/training-mlflow`, `feature/ct-workflow` |
-| Camille | B — App / tests | `feature/api-model-loader` |
-| Victoria | C — DevOps | `feature/repo-setup`, `feature/docker`, `feature/ci`, `feature/rollback`, `feature/docs-deployment` |
+| Lilou | A — Données / ML | `feature/data-pipeline`, `feature/training-mlflow`, `feature/ct-workflow` ; monitoring : `feature/training-profile`, `feature/replay-data`, `feature/drift-metric` |
+| Camille | B — App / tests | `feature/api-model-loader` ; monitoring : `feature/structured-logging`, `feature/log-queries`, `feature/metrics` |
+| Victoria | C — DevOps | `feature/repo-setup`, `feature/docker`, `feature/ci`, `feature/rollback`, `feature/docs-deployment` ; monitoring : `feature/monitoring-stack`, `feature/alerting` |
 
 Chaque membre pousse ses branches et ouvre ses PR depuis son compte ; un autre membre relit et
 approuve. Les PR de promotion (`dev → staging → main`) sont ouvertes à tour de rôle.

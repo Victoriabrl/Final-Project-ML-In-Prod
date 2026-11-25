@@ -19,8 +19,6 @@ mlartifacts/
 **/__pycache__/
 .pytest_cache/
 .ruff_cache/
-.claude/
-CLAUDE.md
 requirements-train.txt
 requirements-dev.txt
 .exercise-data/
