@@ -264,9 +264,6 @@ Vérification réelle (stack locale, champion v5, 2026-11-24) : cible `api` UP ;
 `feature_drift` max 0,025 après du trafic normal, puis 2,1 à 6,9 sur les 5 features après
 600 SMS de `campaign.csv`.
 
-Captures du dashboard : à ajouter dans `docs/img/` lors de la démonstration (trafic normal,
-puis campagne de spam, puis rollback).
-
 ### Surveiller la production (option, pour la démo)
 
 ```bash
@@ -357,10 +354,7 @@ Firing → Normal) et les emails dans Mailtrap.
    - résoudre : `python scripts/replay.py --file .exercise-data/normal.csv --rate 30 --limit 600 --shuffle`
      → la fenêtre redevient normale → « resolved ».
 
-Preuves à garder pour le rendu : capture de *Alert rules* en Firing, capture de chaque email
-« firing » et « resolved » dans Mailtrap.
-
-Vérification réelle (stack locale, 2026-11-24, sans SMTP) :
+Vérification réelle (stack locale, 2026-11-24) :
 
 | Alerte | Déclenchement | Firing après | Retour à Normal |
 |---|---|---|---|
@@ -368,6 +362,7 @@ Vérification réelle (stack locale, 2026-11-24, sans SMTP) :
 | 5xx error rate on /predict | alias inexistant + 400 requêtes | 47 s | 47 s après le retour du modèle |
 | Input drift | 600 SMS de `campaign.csv` | 138 s | 16 s après 600 SMS normaux |
 
-Chaque alerte a bien été routée vers `team-email` (log Grafana `Notify for alerts` ; sans
-SMTP configuré, l'envoi échoue avec « SMTP not configured »). Les emails « firing » et
-« resolved » se vérifient une fois les identifiants Mailtrap mis dans le `.env`.
+Chaque alerte est routée vers `team-email`. Mailtrap a reçu 7 emails : l'email de test du
+contact point, puis un « firing » et un « resolved » pour chacune des 3 alertes. Sans SMTP
+configuré, les alertes passent quand même en *Firing* dans Grafana, mais l'envoi échoue avec
+« SMTP not configured ».
