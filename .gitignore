@@ -38,12 +38,6 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Claude Code local settings
-.claude/settings.local.json
-
-# Course brief: kept locally, never versioned
-docs/BRIEF_CLAUDE_CODE.pdf
-
 # Replay sets for monitoring demos (built from DVC releases, never versioned)
 .exercise-data/
 .exercise-results/
